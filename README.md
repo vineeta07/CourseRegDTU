@@ -289,14 +289,12 @@ Then `npm start` as usual.
 ## For the maintainer: publishing a new download
 
 The installers are built automatically by GitHub (`.github/workflows/release.yml`).
-To publish a new version:
+To publish a version (all on the GitHub website, no terminal):
 
-1. Change `"version"` in `package.json` (e.g. `1.0.1`) and commit.
-2. Create and push a tag with the same number:
-   ```bash
-   git tag v1.0.1
-   ```
-   ```bash
-   git push origin v1.0.1
-   ```
-3. Wait ~10 minutes. Check progress in the **Actions** tab. The files then appear on the **Releases** page.
+1. *(For later versions)* change `"version"` in `package.json` (e.g. `1.0.1`) and commit.
+2. Open https://github.com/vineeta07/CourseRegDTU/releases/new
+3. **Choose a tag** → type `v1.0.0` (or the new version) → **Create new tag**.
+4. **Target** → pick the branch with the code (e.g. `vineeta`).
+5. Title: `v1.0.0` → click **Publish release**.
+6. Wait ~10–15 minutes (progress in the **Actions** tab). The `.exe`, `.dmg`, `.AppImage` and `.deb`
+   files then appear under **Assets** on that release.

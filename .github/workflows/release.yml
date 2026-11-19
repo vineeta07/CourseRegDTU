@@ -1,10 +1,10 @@
 name: Build installers
 
-# Push a tag like v1.0.0 to build Windows/Mac/Linux installers and publish them
-# on the GitHub Releases page. Can also be started by hand from the Actions tab.
+# Publish a release on GitHub (Releases -> Draft a new release) and this builds the
+# Windows/Mac/Linux installers and attaches them to that release automatically.
 on:
-  push:
-    tags: ['v*']
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -45,7 +45,7 @@ jobs:
 
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -54,7 +54,9 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.release.tag_name }}
           files: out/*
+          append_body: true
           body: |
             ## Download
 
