@@ -93,6 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('manual-student-id').disabled = isAutomationRunning;
     document.getElementById('clear-session-btn').disabled = isAutomationRunning;
     document.getElementById('watch-only').disabled = isAutomationRunning;
+    document.getElementById('speed').disabled = isAutomationRunning;
     document.getElementById('browser-ua').disabled = isAutomationRunning;
 
     const courseRows = document.querySelectorAll('.course-row input, .course-row button');
@@ -191,6 +192,7 @@ document.addEventListener('DOMContentLoaded', () => {
       manualCookie,
       manualStudentId,
       watchOnly: document.getElementById('watch-only').checked,
+      speed: document.getElementById('speed').value,
       browserUserAgent: document.getElementById('browser-ua').value.trim(),
     });
 

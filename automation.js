@@ -18,14 +18,15 @@ const cheerio = require('cheerio');
 const BASE_HOST = 'exam-setu.dtu.ac.in';
 const BASE_URL = process.env.EXAMSETU_BASE_URL || `https://${BASE_HOST}`; // override only for local testing
 
-const POLL_INTERVAL_MS = 3000;      // how often the registration page is checked
-const AFTER_POST_DELAY_MS = 3000;   // wait after a register request before re-checking
+const POLL_SPEEDS = { normal: 3000, fast: 2000 }; // how often the registration page is checked
+const AFTER_POST_DELAY_MS = 1200;   // wait after a register request before checking it worked
 const MAX_POSTS_PER_COURSE = 2;     // give up on a course after this many failed register attempts
 const MAX_POSTS_PER_RUN = 10;       // hard cap on register requests in one run
-const MIN_GAP_MS = 1500;            // minimum gap between ANY two requests
-const MAX_REQUESTS_PER_MINUTE = 25; // hard rate limit across all requests
+const MIN_GAP_MS = 1000;            // minimum gap between page loads
+const MIN_GAP_REGISTER_MS = 250;    // a register click right after the page showed a free seat
+const MAX_REQUESTS_PER_MINUTE = 40; // hard rate limit across all requests
 const MAX_RELOGINS = 3;             // max automatic re-logins per run
-const RELOGIN_BACKOFF_MS = [15000, 45000, 120000];
+const RELOGIN_BACKOFF_MS = [0, 5000, 20000]; // 1st re-login is instant
 const MAX_CONSECUTIVE_ERRORS = 10;  // network/5xx errors in a row before slowing down
 
 const USER_AGENT =
@@ -97,11 +98,11 @@ function isLoginRedirect(response) {
 
 // Rate limiter: keeps a minimum gap between requests and a per-minute cap,
 // so the app never sends bursts no matter what the loop does.
-async function throttle() {
+async function throttle(minGap = MIN_GAP_MS) {
   for (;;) {
     const now = Date.now();
     while (recentRequests.length && now - recentRequests[0] > 60000) recentRequests.shift();
-    const gapWait = lastRequestAt + MIN_GAP_MS - now;
+    const gapWait = lastRequestAt + minGap - now;
     const minuteWait = recentRequests.length >= MAX_REQUESTS_PER_MINUTE ? 60000 - (now - recentRequests[0]) + 50 : 0;
     const wait = Math.max(gapWait, minuteWait);
     if (wait <= 0) break;
@@ -129,7 +130,8 @@ function checkPushback(response) {
 async function request(url, options) {
   const { default: got } = await import('got');
   if (!isRunning) throw new Error('Stopped.');
-  await throttle();
+  await throttle(options.minGap);
+  delete options.minGap;
   const response = await got(url, {
     responseType: 'text',
     followRedirect: false,
@@ -281,6 +283,7 @@ async function sendRegister(session, row) {
   const response = await request(isGet ? `${url}${body ? (url.includes('?') ? '&' : '?') + body : ''}` : url, {
     method: isGet ? 'GET' : 'POST',
     ...(isGet ? {} : { body }),
+    minGap: MIN_GAP_REGISTER_MS,
     headers: commonHeaders({
       'Content-Type': 'application/x-www-form-urlencoded',
       'Origin': BASE_URL,
@@ -297,7 +300,8 @@ async function sendRegister(session, row) {
 
 // ---------------- Main ----------------
 async function startAutomation(options, callbacks) {
-  const { credentials, courses, autoLogin, manualCookie, manualStudentId, sessionFile, watchOnly, browserUserAgent } = options;
+  const { credentials, courses, autoLogin, manualCookie, manualStudentId, sessionFile, watchOnly, browserUserAgent, speed } = options;
+  const POLL_INTERVAL_MS = POLL_SPEEDS[speed] || POLL_SPEEDS.normal;
   const rollNo = credentials && credentials.r;
   isRunning = true;
   let reloginCount = 0;
@@ -347,8 +351,9 @@ async function startAutomation(options, callbacks) {
     }
     const wait = RELOGIN_BACKOFF_MS[Math.min(reloginCount, RELOGIN_BACKOFF_MS.length - 1)];
     reloginCount++;
-    status(`Session expired. Waiting ${Math.round(wait / 1000)}s before re-login (${reloginCount}/${MAX_RELOGINS})...`);
-    await delay(wait);
+    status(wait ? `Session expired. Waiting ${Math.round(wait / 1000)}s before re-login (${reloginCount}/${MAX_RELOGINS})...`
+                : `Session expired. Logging in again now (${reloginCount}/${MAX_RELOGINS})...`);
+    if (wait) await delay(wait);
     if (!isRunning) throw new Error('Stopped.');
     const s = await obtainSession(true);
     return { ...s, source: 'relogin' };

@@ -44,7 +44,11 @@
 
     <div class="card">
       <h2>Use Browser Session (optional, no login)</h2>
-      <p class="hint">Log in on exam-setu.dtu.ac.in in your browser, open DevTools &rarr; Application &rarr; Cookies, and copy the cookies as <code>name=value; name2=value2</code>. The Student ID is the long code at the end of your course registration URL.</p>
+      <p class="hint">1. Log in on exam-setu.dtu.ac.in and open your course registration page.<br>
+      2. Press F12 (Mac: Cmd+Option+I) &rarr; <b>Network</b> tab &rarr; press F5.<br>
+      3. Click the first row &rarr; <b>Request Headers</b> &rarr; right-click the <b>cookie</b> line &rarr; Copy value &rarr; paste below.<br>
+      4. Student ID = the long code at the end of the page link (you can paste the whole link).<br>
+      Don't press Logout on the website, or the cookie stops working.</p>
       <div class="input-group">
         <label for="manual-cookie">Session Cookie</label>
         <input type="password" id="manual-cookie" placeholder="connect.sid=...; token=...">
@@ -82,7 +86,14 @@
           Watch only (test mode: shows what it would do, sends no register requests)
         </label>
       </div>
-      <p class="hint">Safety limits: max 25 requests/min, 1.5s minimum gap, 2 register tries per course, 10 per run. Stops on any warning from the portal. Don't keep refreshing the portal in your browser while this runs.</p>
+      <div class="input-group">
+        <label for="speed">Checking speed</label>
+        <select id="speed">
+          <option value="normal">Normal - every 3 seconds (safer)</option>
+          <option value="fast">Fast - every 2 seconds (use only during the registration rush)</option>
+        </select>
+      </div>
+      <p class="hint">Safety limits: max 40 requests/min, 2 register tries per course, 10 per run. Stops on any warning from the portal. Don't keep refreshing the portal in your browser while this runs.</p>
       <div class="automation-controls">
         <button id="start-btn">Start Automation</button>
         <button id="stop-btn" class="hidden">Stop Automation</button>

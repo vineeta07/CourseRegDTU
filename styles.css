@@ -439,3 +439,5 @@ h2 {
   font-family: 'Fira Code', monospace;
 }
 .hint { font-size: 0.85em; opacity: 0.8; margin: 0 0 10px; }
+
+select { width: 100%; padding: 8px; border-radius: 6px; }

@@ -50,7 +50,7 @@ ipcMain.handle('start-automation', async (event, data) => {
     return { success: false, error: 'Automation is already running.' };
   }
 
-  const { creds, courses, autoLogin, manualCookie, manualStudentId, watchOnly, browserUserAgent } = data;
+  const { creds, courses, autoLogin, manualCookie, manualStudentId, watchOnly, browserUserAgent, speed } = data;
   automationRunning = true;
 
   try {
@@ -62,6 +62,7 @@ ipcMain.handle('start-automation', async (event, data) => {
       manualStudentId,
       watchOnly,
       browserUserAgent,
+      speed,
       sessionFile: path.join(app.getPath('userData'), 'session.json'),
     }, {
       onStatusUpdate: (message) => win.webContents.send('status-update', message),
