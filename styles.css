@@ -438,3 +438,4 @@ h2 {
   height: 300px;
   font-family: 'Fira Code', monospace;
 }
+.hint { font-size: 0.85em; opacity: 0.8; margin: 0 0 10px; }

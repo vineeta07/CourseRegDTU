@@ -43,6 +43,20 @@
     </div>
 
     <div class="card">
+      <h2>Use Browser Session (optional, no login)</h2>
+      <p class="hint">Log in on exam-setu.dtu.ac.in in your browser, open DevTools &rarr; Application &rarr; Cookies, and copy the cookies as <code>name=value; name2=value2</code>. The Student ID is the long code at the end of your course registration URL.</p>
+      <div class="input-group">
+        <label for="manual-cookie">Session Cookie</label>
+        <input type="password" id="manual-cookie" placeholder="connect.sid=...; token=...">
+      </div>
+      <div class="input-group">
+        <label for="manual-student-id">Student ID (from URL)</label>
+        <input type="text" id="manual-student-id" placeholder="e.g. 66b0f2321af8ca2e2591dc58">
+      </div>
+      <button id="clear-session-btn">Forget Saved Session</button>
+    </div>
+
+    <div class="card">
       <div class="courses-header">
         <h2>Courses to Track</h2>
         <button id="json-input-btn" class="icon-btn" title="Input from JSON">

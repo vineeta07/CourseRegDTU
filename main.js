@@ -2,6 +2,7 @@
 
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { startAutomation, stopAutomation } = require('./automation');
 
 let win;
@@ -41,12 +42,18 @@ ipcMain.handle('start-automation', async (event, data) => {
     return { success: false, error: 'Automation is already running.' };
   }
 
-  const { creds, courses, autoLogin } = data;
-  const ipAddress = '14.139.251.105';
+  const { creds, courses, autoLogin, manualCookie, manualStudentId } = data;
   automationRunning = true;
 
   try {
-    startAutomation(creds, ipAddress, courses, autoLogin, {
+    startAutomation({
+      credentials: creds,
+      courses,
+      autoLogin,
+      manualCookie,
+      manualStudentId,
+      sessionFile: path.join(app.getPath('userData'), 'session.json'),
+    }, {
       onStatusUpdate: (message) => win.webContents.send('status-update', message),
       onCourseRegistered: (course) => win.webContents.send('course-registered', course),
       onCourseBlocked: (course) => win.webContents.send('course-blocked', course),
@@ -61,6 +68,11 @@ ipcMain.handle('start-automation', async (event, data) => {
     automationRunning = false;
     return { success: false, error: error.message };
   }
+});
+
+ipcMain.handle('clear-session', async () => {
+  try { fs.unlinkSync(path.join(app.getPath('userData'), 'session.json')); } catch (_) {}
+  return { success: true };
 });
 
 ipcMain.handle('stop-automation', async () => {

@@ -1,505 +1,418 @@
-// Required Modules
-const https = require('https');
+// automation.js
+//
+// Course registration helper for DTU ExamSetu (exam-setu.dtu.ac.in).
+//
+// Design goals (to avoid tripping the portal's "multiple altering requests" block):
+//   * Log in as few times as possible: reuse a saved session (cookies + student id)
+//     across runs, or use a session cookie copied from your own browser.
+//   * Never loop on login. Re-login is capped and backed off.
+//   * Send each register (POST) request at most a few times per course, and only
+//     when the page actually shows free seats. Stop retrying a course that keeps failing.
+//   * Stop immediately if the portal shows the "Access Suspended" page.
+
+const fs = require('fs');
 const querystring = require('querystring');
 const cheerio = require('cheerio');
-const { performance } = require('perf_hooks');
-const notifier = require('node-notifier');
 
-// Custom HTTPS Agent Configuration
-const httpsAgent = new https.Agent({
-  rejectUnauthorized: false, // Disable SSL certificate verification
-  keepAlive: true,           // Enable keep-alive for persistent connections
-  maxSockets: 50,            // Maximum number of sockets per host
-  maxFreeSockets: 10,        // Maximum number of free sockets per host
-});
+// ---------------- Configuration ----------------
+const BASE_HOST = 'exam-setu.dtu.ac.in';
+const BASE_URL = `https://${BASE_HOST}`;
 
-// Function to Extract and Merge Cookies from Response Headers
-function extractAndMergeCookies(headers, currentCookies) {
-  const setCookies = headers['set-cookie'];
-  if (setCookies) {
-    const newCookies = setCookies.map(cookie => cookie.split(';')[0]);
-    const cookieMap = new Map(
-      (currentCookies || '')
-        .split('; ')
-        .filter(Boolean)
-        .map(cookie => cookie.split('='))
-    );
-    newCookies.forEach(cookie => {
-      const [key, value] = cookie.split('=');
-      cookieMap.set(key, value);
-    });
-    return Array.from(cookieMap.entries()).map(([key, value]) => `${key}=${value}`).join('; ');
-  }
-  return currentCookies || '';
-}
+const POLL_INTERVAL_MS = 2000;      // how often the registration page is checked
+const AFTER_POST_DELAY_MS = 2500;   // wait after a register request before re-checking
+const MAX_POSTS_PER_COURSE = 3;     // give up on a course after this many failed register attempts
+const MAX_RELOGINS = 3;             // max automatic re-logins per run
+const RELOGIN_BACKOFF_MS = [15000, 45000, 120000];
+const MAX_CONSECUTIVE_ERRORS = 10;  // network/5xx errors in a row before slowing down
 
-// Function to Perform Login Automation
-async function automateLogin({r,p}, ipAddress) {
-  const got = (await import('got')).default;
-
-  try {
-    let cookies = "";
-
-    // Step 1: GET `/` to retrieve initial cookies (e.g., `connect.sid`)
-    let response = await got(`https://${ipAddress}/`, {
-      method: 'GET',
-      headers: getCommonHeaders(),
-      responseType: 'text',
-      agent: { https: httpsAgent },
-      followRedirect: false,
-      throwHttpErrors: false,
-    });
-
-    // Merge cookies from the initial response
-    cookies = extractAndMergeCookies(response.headers, cookies);
-    console.log('Step 1: Retrieved initial cookies:', cookies);
-
-    // Step 2: POST `/student/login` with credentials to retrieve `token`
-    const credentials = querystring.stringify({
-      roll_no: r,
-      password: p,
-    });
-
-    response = await got(`https://${ipAddress}/student/login`, {
-      method: 'POST',
-      body: credentials,
-      headers: {
-        "Host" : "reg.exam.dtu.ac.in",
-        "Cache-Control": "max-age=0",
-        "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
-        "Origin": "https://reg.exam.dtu.ac.in",
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Upgrade-Insecure-Requests": "1",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Sec-Fetch-Site": "same-origin",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-User": "?1",
-        "Sec-Fetch-Dest": "document",
-        "Referer" : "https://reg.exam.dtu.ac.in/student/login",
-        "Accept-Encoding": "gzip, deflate, br, zstd",
-        "Priority": "u=0, i",
-        "Connection": "keep-alive",
-        'Cookie': cookies,
-        "DNT" : "1",
-      },
-      responseType: 'text',
-      agent: {https: httpsAgent},
-      followRedirect: false,
-      throwHttpErrors: false,
-    });
-
-    cookies = extractAndMergeCookies(response.headers, cookies);
-    console.log('Step 2: Retrieved token and updated cookies:', cookies);
-
-    const match = response.body.match(/\/student\/home\/([a-zA-Z0-9]+)/);
-    let studentHash = "";
-    if (match && match[1]) {
-      studentHash = match[1];
-      console.log('Extracted Student Hash:', studentHash);
-    } else {
-      if (response.body.includes('Invalid Roll No or Password')) {
-          throw new Error('Invalid Roll Number or Password.');
-      }
-      throw new Error('Could not extract student hash from the login response.');
-    }
-
-    return { cookies, studentHash };
-  } catch (error) {
-    console.error('Error during login:', error.message);
-    throw error;
-  }
-}
-
-async function automateLoginWithRetry(credentials, ipAddress, callbacks) {
-  let attempts = 0;
-  const delayTime = 10;
-
-  while (isRunning) {
-    try {
-      attempts++;
-      callbacks.onStatusUpdate(`Login attempt ${attempts}...`);
-      const result = await automateLogin(credentials, ipAddress);
-      callbacks.onStatusUpdate('Login successful.');
-      return result;
-    } catch (error) {
-      if (!isRunning) {
-        break;
-      }
-      if (error.message === 'Invalid Roll Number or Password.') {
-        throw error; // Do not retry on invalid credentials
-      }
-      callbacks.onStatusUpdate(`Login failed: ${error.message}. Retrying in ${delayTime}ms...`);
-      await delay(delayTime);
-    }
-  }
-  throw new Error("Automation stopped during login.");
-}
-
-// Function to Fetch Course Registration HTML Content
-async function fetchCourseRegHTML(cookies, studentHash, ipAddress) {
-  const { default: got } = await import('got');
-
-  try {
-    const response = await got(`https://${ipAddress}/student/courseRegistration/${studentHash}`, {
-      method: 'GET',
-      headers: {
-        ...getCommonHeaders(),
-        'Referer': `https://reg.exam.dtu.ac.in/student/home/${studentHash}`,
-        'Cookie': cookies,
-      },
-      agent: { https: httpsAgent },
-      responseType: 'text',
-      followRedirect: false,
-    });
-
-    if (response.statusCode !== 200) {
-      throw new Error(`Failed to fetch course registration page. Status code: ${response.statusCode}`);
-    }
-
-    console.log('Fetched course registration page successfully.');
-    // console.log(response.body);
-    return response.body;
-  } catch (error) {
-    console.warn("Warning: Unable to fetch course registration HTML content.", error);
-    return null;
-  }
-}
-
-// Function to Fetch and Track Desired Courses
-async function fetchTrackedCourses(cookies, studentHash, ipAddress, courseCodes) {
-  const htmlContent = await fetchCourseRegHTML(cookies, studentHash, ipAddress);
-
-  if (!htmlContent) {
-    throw new Error("No HTML content fetched for course registration.");
-  }
-
-  try {
-    const $ = cheerio.load(htmlContent);
-    const trackedCourses = new Map();
-
-    const parsedCourses = new Map(
-      courseCodes.map(code => {
-        const [courseCode, courseSlot] = code.split(":");
-        return [courseCode, courseSlot];
-      })
-    );
-
-    $("div.elective-subjects.table-responsive table.table-hover.table-bordered tbody tr:not(.setHeader)").each((_, row) => {
-      const cells = $(row).find("td");
-      if (cells.length === 6) {
-        const courseCode = $(cells[1]).text().trim();
-        // console.log(`Processing Course: ${courseCode}`);
-        const courseSlot = $(cells[3]).text().trim();
-        // console.log(`Course Slot: ${courseSlot}`);
-        const seats = parseInt($(cells[4]).text().trim(), 10) || 0;
-        // console.log(`Available Seats: ${seats}`);
-        const formAction = $(cells[5]).find("form").attr("action");
-        // console.log(`Form Action: ${formAction}`);
-        if (formAction) {
-          const courseHashMatch = formAction.match(new RegExp(`/student/courseRegister/${studentHash}/([a-zA-Z0-9]+)`));
-          const courseHash = courseHashMatch ? courseHashMatch[1] : null;
-
-          if (courseHash && parsedCourses.has(courseCode) && parsedCourses.get(courseCode) === courseSlot) {
-            trackedCourses.set(courseHash, {
-              courseCode,
-              courseSlot,
-              seats,
-            });
-            parsedCourses.delete(courseCode); // Remove found 
-            console.log(`Tracking Course: ${courseCode} (Slot: ${courseSlot}) with Hash: ${courseHash} and Seats: ${seats}`);
-          }
-        }
-      }
-    });
-
-    // Check for courses that were not found
-    // console.log(parsedCourses);
-    if (parsedCourses.size > 0) {
-      const notFound = Array.from(parsedCourses.keys()).join(', ');
-      throw new Error(`The following course(s) were not found: ${notFound}. Please check the course code and slot.`);
-    }
-    // console.log(`Total Courses Being Tracked: ${trackedCourses}`);
-    return trackedCourses;
-  } catch (error) {
-    console.error("Error processing courses:", error);
-    return new Map();
-  }
-}
-
-// Function to Send POST Request for Course Registration
-const sendPostReq = async (cookies, studentHash, ipAddress, courseHash) => {
-  const { default: got } = await import('got');
-
-  try {
-    const response = await got.post(`https://${ipAddress}/student/courseRegister/${studentHash}/${courseHash}`, {
-      headers: {
-        ...getCommonHeaders(),
-        'Referer': `https://reg.exam.dtu.ac.in/student/courseRegistration/${studentHash}`,
-        'Cookie': cookies,
-        'Content-Length': '0',
-      },
-      responseType: "text",
-      agent: { https: httpsAgent },
-      throwHttpErrors: false,
-      followRedirect: false,
-    });
-
-    console.log(`POST Request to register course ${courseHash} - Status Code: ${response.statusCode}`);
-  } catch (error) {
-    console.error("Error sending POST request:", error.message);
-  }
-};
+const USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 
 let isRunning = false;
 
-// Handler Logic to Monitor and Register Courses
-const handlerLogic = async (session, ipAddress, trackedCourses, autoLogin, credentials, callbacks) => {
-  const { default: got } = await import('got');
-  let previousEtag = null;
-  let currentSession = session;
+class SuspendedError extends Error {}
+class SessionExpiredError extends Error {}
 
-  const sendGetReq = async () => {
-    if (!isRunning) return null;
-    try {
-      const response = await got(`https://${ipAddress}/student/courseRegistration/${currentSession.studentHash}`, {
-        method: 'GET',
-        headers: {
-          ...getCommonHeaders(),
-          'Referer': `https://reg.exam.dtu.ac.in/student/home/${currentSession.studentHash}`,
-          'Cookie': currentSession.cookies,
-        },
-        agent: { https: httpsAgent },
-        responseType: 'text',
-        followRedirect: false,
-      });
-
-      const currentEtag = response.headers['etag'];
-      if (previousEtag && currentEtag === previousEtag) {
-        callbacks.onStatusUpdate('No updates found (ETag unchanged).');
-        return null;
-      }
-      callbacks.onStatusUpdate('New data fetched (ETag changed).');
-      previousEtag = currentEtag;
-
-      const $ = cheerio.load(response.body);
-
-      if (response.body.length < 18000 && $('p').text().includes('Found. Redirecting to /student/login')) {
-        throw new Error("Session Expired");
-      }
-
-      const alertDiv = $('div.alert.alert-danger.alert-dismissible.fade.show[role="alert"]');
-      if (alertDiv.length > 0) {
-        callbacks.onStatusUpdate(`Alert: ${alertDiv.text().trim()}`);
-      }
-
-      $("tr[bgcolor='#0ff288']").each((_, element) => {
-        const courseHashMatch = $(element).find("form[action*='/student/courseRegister/']").attr("action")?.match(/\/([a-f0-9]{24})$/);
-        if (courseHashMatch) {
-          const courseHash = courseHashMatch[1];
-          if (trackedCourses.has(courseHash)) {
-            const removedCourse = trackedCourses.get(courseHash);
-            trackedCourses.delete(courseHash);
-            callbacks.onCourseRegistered(removedCourse);
-            callbacks.onStatusUpdate(`Course Already Registered: ${removedCourse.courseCode} - Dropping from tracking.`);
-          }
-        }
-      });
-
-      $("tr[bgcolor='#d4d3d2']").each((_, element) => {
-        const courseHashMatch = $(element).find("form[action*='/student/courseRegister/']").attr("action")?.match(/\/([a-f0-9]{24})$/);
-        if (courseHashMatch) {
-          const courseHash = courseHashMatch[1];
-          if (trackedCourses.has(courseHash)) {
-            const blockedCourse = trackedCourses.get(courseHash);
-            trackedCourses.delete(courseHash);
-            callbacks.onCourseBlocked(blockedCourse);
-            callbacks.onStatusUpdate(`Course is Blocked: ${blockedCourse.courseCode} - Dropping from tracking.`);
-          }
-        }
-      });
-
-      return $;
-    } catch (error) {
-      if (!isRunning) throw error;
-
-      if (autoLogin && error.message.includes("Session Expired")) {
-        callbacks.onStatusUpdate("Session expired. Attempting to re-login...");
-        try {
-          currentSession = await automateLoginWithRetry(credentials, ipAddress, callbacks);
-          callbacks.onStatusUpdate("Session re-initiated successfully.");
-        } catch (loginError) {
-          callbacks.onError(loginError.message);
-          throw loginError; // Stop if relogin fails (e.g., invalid credentials)
-        }
-        return null; // Retry the GET request with the new session
-      }
-
-      // Handle HTTP errors (e.g., 404, 5xx) by retrying
-      if (error.response && error.response.statusCode) {
-        callbacks.onStatusUpdate(`Request failed with status ${error.response.statusCode}. Retrying...`);
-        return null; // Returning null will cause a retry after 900ms in the main loop
-      }
-
-      // Handle other errors (e.g., network issues)
-      callbacks.onError(`An unexpected error occurred: ${error.message}. Retrying...`);
-      return null; // Returning null will cause a retry
-    }
-  };
-
-  const checkAndRegister = async () => {
-    while (isRunning) {
-      const $ = await sendGetReq();
-      if (!$) {
-        await delay(900);
-        continue;
-      }
-
-      const slotsToTrack = groupCoursesBySlot(trackedCourses);
-      let registeredSomething = false;
-
-      for (const [courseSlot, courses] of slotsToTrack.entries()) {
-        if (!isRunning) return;
-        const slotHeader = $(`tr.setHeader td[colspan="3"]:contains(${courseSlot})`);
-        if (slotHeader.length === 0) continue;
-
-        const slotRows = gatherSlotRows(slotHeader);
-
-        for (const row of slotRows) {
-          if (!isRunning) return;
-          const cells = $(row).find("td");
-          const courseCode = $(cells[1]).text().trim();
-          const courseData = courses.find(c => c.courseCode === courseCode);
-
-          if (courseData) {
-            const { courseHash, seats: trackedSeats } = courseData;
-            const newSeats = parseInt($(cells[4]).text().trim(), 10) || 0;
-
-            if (newSeats !== trackedSeats) {
-              const updatedCourseData = { ...courseData, seats: newSeats };
-              trackedCourses.set(courseHash, updatedCourseData);
-              callbacks.onStatusUpdate(`Seat Update: ${courseCode} (${courseData.courseSlot}) - Seats: ${trackedSeats} -> ${newSeats}`);
-            }
-
-            if (newSeats > 0) {
-              await sendPostReq(currentSession.cookies, currentSession.studentHash, ipAddress, courseHash);
-              callbacks.onStatusUpdate(`Attempting to register for ${courseCode}...`);
-              registeredSomething = true;
-              break;
-            }
-          }
-        }
-        if (registeredSomething) break;
-      }
-
-      if (registeredSomething) {
-        await delay(1000);
-        continue;
-      }
-
-      if (trackedCourses.size === 0) {
-        callbacks.onStatusUpdate('All courses have been registered. Stopping automation.');
-        break;
-      }
-
-      await delay(900);
-    }
-  };
-
-  await checkAndRegister();
-};
-
-// Utility Function to Get Common Headers
-function getCommonHeaders() {
-  return {
-    "Host": "reg.exam.dtu.ac.in",
-    "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_  A Brand";v="24"',
-    "Sec-Ch-Ua-Mobile": "?0",
-    "Sec-Ch-Ua-Platform": '"Windows"',
-    "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
-    "Upgrade-Insecure-Requests": "1",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-User": "?1",
-    "Sec-Fetch-Dest": "document",
-    "Accept-Encoding": "gzip, deflate, br, zstd",
-    "Priority": "u=0, i",
-    "Connection": "keep-alive",
-    "DNT": "1",
-  };
-}
-
-// Utility Function to Delay Execution
+// ---------------- Helpers ----------------
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Utility Function to Group Courses by Slot
-function groupCoursesBySlot(trackedCourses) {
-  const slotsToTrack = new Map();
-  for (const [courseHash, { courseCode, courseSlot, seats }] of trackedCourses.entries()) {
-    if (!slotsToTrack.has(courseSlot)) {
-      slotsToTrack.set(courseSlot, []);
-    }
-    slotsToTrack.get(courseSlot).push({ courseHash, courseCode, seats });
-  }
-  return slotsToTrack;
+function commonHeaders(extra = {}) {
+  return {
+    'User-Agent': USER_AGENT,
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
+    ...extra,
+  };
 }
 
-// Utility Function to Gather Rows Under a Slot Header
-function gatherSlotRows(slotHeader) {
-  const slotRows = [];
-  let currentRow = slotHeader.parent().next();
-  while (currentRow.length > 0) {
-    if (currentRow.hasClass("setHeader")) break;
-    slotRows.push(currentRow[0]);
-    currentRow = currentRow.next();
-  }
-  return slotRows;
+function mergeCookies(headers, currentCookies) {
+  const setCookies = headers['set-cookie'];
+  if (!setCookies) return currentCookies || '';
+  const map = new Map();
+  (currentCookies || '').split(';').map(s => s.trim()).filter(Boolean).forEach(c => {
+    const i = c.indexOf('=');
+    if (i > 0) map.set(c.slice(0, i), c.slice(i + 1));
+  });
+  setCookies.forEach(raw => {
+    const c = raw.split(';')[0];
+    const i = c.indexOf('=');
+    if (i > 0) map.set(c.slice(0, i), c.slice(i + 1));
+  });
+  return Array.from(map.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
 }
 
-// Main Execution Function
-async function startAutomation(credentials, ipAddress, courseIdsToTrack, autoLogin, callbacks) {
-  isRunning = true;
+// Detects the "DEVICE ACCESS SUSPENDED" page or a redirect to it.
+function checkSuspended(response) {
+  const location = response.headers.location || '';
+  const body = typeof response.body === 'string' ? response.body : '';
+  if (
+    location.includes('/department/login') ||
+    /DEVICE ACCESS SUSPENDED|Access Suspended/i.test(body)
+  ) {
+    const ref = body.match(/Unique Reference Identifier[\s\S]{0,200}?([A-Z0-9]{8})/);
+    throw new SuspendedError(
+      'The portal has suspended access for this device. Stopping now. ' +
+      'Visit the Examination Department with your ID card' +
+      (ref ? ` and reference code ${ref[1]}` : '') + ' to get it unblocked.'
+    );
+  }
+}
+
+function isLoginRedirect(response) {
+  const location = response.headers.location || '';
+  if (response.statusCode >= 300 && response.statusCode < 400 && /\/student\/login|^\/$|\/login/.test(location)) {
+    return true;
+  }
+  const body = typeof response.body === 'string' ? response.body : '';
+  return body.length < 18000 && /Redirecting to \/student\/login/.test(body);
+}
+
+async function request(url, options) {
+  const { default: got } = await import('got');
+  const response = await got(url, {
+    responseType: 'text',
+    followRedirect: false,
+    throwHttpErrors: false,
+    timeout: { request: 20000 },
+    retry: { limit: 0 },
+    ...options,
+  });
+  checkSuspended(response);
+  return response;
+}
+
+// ---------------- Session persistence ----------------
+function loadSavedSession(sessionFile, rollNo) {
   try {
-    let session;
-    if (autoLogin) {
-      session = await automateLoginWithRetry(credentials, ipAddress, callbacks);
-    } else {
-      callbacks.onStatusUpdate('Attempting to log in...');
-      session = await automateLogin(credentials, ipAddress);
+    if (!sessionFile || !fs.existsSync(sessionFile)) return null;
+    const data = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
+    if (data && data.cookies && data.studentHash && (!rollNo || data.rollNo === rollNo)) return data;
+  } catch (_) { /* ignore corrupt file */ }
+  return null;
+}
+
+function saveSession(sessionFile, rollNo, session) {
+  if (!sessionFile) return;
+  try {
+    fs.writeFileSync(
+      sessionFile,
+      JSON.stringify({ rollNo, cookies: session.cookies, studentHash: session.studentHash, savedAt: Date.now() }),
+      { mode: 0o600 }
+    );
+  } catch (e) {
+    console.warn('Could not save session:', e.message);
+  }
+}
+
+function clearSavedSession(sessionFile) {
+  try { if (sessionFile && fs.existsSync(sessionFile)) fs.unlinkSync(sessionFile); } catch (_) {}
+}
+
+// ---------------- Login ----------------
+async function login({ r, p }) {
+  let cookies = '';
+
+  // Get initial cookies (connect.sid etc.)
+  let response = await request(`${BASE_URL}/student/login`, { method: 'GET', headers: commonHeaders() });
+  cookies = mergeCookies(response.headers, cookies);
+
+  response = await request(`${BASE_URL}/student/login`, {
+    method: 'POST',
+    body: querystring.stringify({ roll_no: r, password: p }),
+    headers: commonHeaders({
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Origin': BASE_URL,
+      'Referer': `${BASE_URL}/student/login`,
+      'Cookie': cookies,
+    }),
+  });
+  cookies = mergeCookies(response.headers, cookies);
+
+  const haystack = `${response.headers.location || ''}\n${response.body || ''}`;
+  const match = haystack.match(/\/student\/home\/([a-zA-Z0-9]+)/);
+  if (match) return { cookies, studentHash: match[1] };
+
+  if (/Invalid Roll No or Password/i.test(response.body || '')) {
+    throw new Error('Invalid Roll Number or Password.');
+  }
+  throw new Error(`Login failed (HTTP ${response.statusCode}). Could not find student id in the response.`);
+}
+
+// ---------------- Registration page ----------------
+async function fetchRegistrationPage(session) {
+  const response = await request(`${BASE_URL}/student/courseRegistration/${session.studentHash}`, {
+    method: 'GET',
+    headers: commonHeaders({
+      'Referer': `${BASE_URL}/student/home/${session.studentHash}`,
+      'Cookie': session.cookies,
+    }),
+  });
+  session.cookies = mergeCookies(response.headers, session.cookies);
+
+  if (isLoginRedirect(response)) throw new SessionExpiredError('Session expired.');
+  if (response.statusCode !== 200) {
+    const err = new Error(`Registration page returned HTTP ${response.statusCode}`);
+    err.statusCode = response.statusCode;
+    throw err;
+  }
+  return response.body;
+}
+
+function courseHashFromAction(action, studentHash) {
+  if (!action) return null;
+  const m = action.match(new RegExp(`/student/courseRegister/${studentHash}/([a-zA-Z0-9]+)`)) ||
+            action.match(/\/student\/courseRegister\/[a-zA-Z0-9]+\/([a-zA-Z0-9]+)/);
+  return m ? m[1] : null;
+}
+
+// Parses the page into rows: { courseCode, courseSlot, seats, courseHash, state }
+function parseCourses(html, studentHash) {
+  const $ = cheerio.load(html);
+  const rows = [];
+  let currentSlot = null;
+
+  $('tr').each((_, tr) => {
+    const row = $(tr);
+    if (row.hasClass('setHeader')) {
+      currentSlot = row.text().replace(/\s+/g, ' ').trim();
+      return;
+    }
+    const cells = row.find('td');
+    if (cells.length < 6) return;
+
+    const courseCode = $(cells[1]).text().trim();
+    const courseSlot = $(cells[3]).text().trim() || currentSlot;
+    const seats = parseInt($(cells[4]).text().trim(), 10) || 0;
+    const action = row.find("form[action*='/student/courseRegister/']").attr('action');
+    const courseHash = courseHashFromAction(action, studentHash);
+    const bg = (row.attr('bgcolor') || '').toLowerCase();
+    const state = bg === '#0ff288' ? 'registered' : bg === '#d4d3d2' ? 'blocked' : 'open';
+
+    if (courseCode) rows.push({ courseCode, courseSlot, seats, courseHash, state });
+  });
+
+  const alert = $('div.alert.alert-danger').first().text().replace(/\s+/g, ' ').trim();
+  return { rows, alert };
+}
+
+async function sendRegister(session, courseHash) {
+  const response = await request(`${BASE_URL}/student/courseRegister/${session.studentHash}/${courseHash}`, {
+    method: 'POST',
+    body: '',
+    headers: commonHeaders({
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Origin': BASE_URL,
+      'Referer': `${BASE_URL}/student/courseRegistration/${session.studentHash}`,
+      'Cookie': session.cookies,
+    }),
+  });
+  session.cookies = mergeCookies(response.headers, session.cookies);
+  if (isLoginRedirect(response) && !/courseRegistration/.test(response.headers.location || '')) {
+    throw new SessionExpiredError('Session expired.');
+  }
+  return response.statusCode;
+}
+
+// ---------------- Main ----------------
+async function startAutomation(options, callbacks) {
+  const { credentials, courses, autoLogin, manualCookie, manualStudentId, sessionFile } = options;
+  const rollNo = credentials && credentials.r;
+  isRunning = true;
+  let reloginCount = 0;
+
+  const status = msg => { console.log(msg); callbacks.onStatusUpdate(msg); };
+
+  // Get a session without logging in if at all possible.
+  async function obtainSession(forceLogin = false) {
+    if (!forceLogin) {
+      if (manualCookie && manualStudentId) {
+        status('Using session cookie from your browser (no login).');
+        return { cookies: manualCookie, studentHash: manualStudentId, source: 'manual' };
+      }
+      const saved = loadSavedSession(sessionFile, rollNo);
+      if (saved) {
+        status('Reusing saved session (no login).');
+        return { cookies: saved.cookies, studentHash: saved.studentHash, source: 'saved' };
+      }
+    }
+    if (!rollNo || !credentials.p) {
+      throw new Error('Session is not valid and no roll number/password given. Paste a fresh cookie or enter credentials.');
+    }
+    status('Logging in...');
+    const s = await login(credentials);
+    saveSession(sessionFile, rollNo, s);
+    status('Login successful. Session saved for reuse.');
+    return { ...s, source: 'login' };
+  }
+
+  async function relogin(session) {
+    if (session.source === 'manual' && !(autoLogin && rollNo && credentials.p)) {
+      throw new Error('Your browser session cookie has expired. Log in on the website, copy the new cookie, and start again.');
+    }
+    if (session.source !== 'login' && session.source !== 'relogin') {
+      // Saved/manual session went stale: one fresh login is expected, not counted as a retry.
+      clearSavedSession(sessionFile);
+      const s = await obtainSession(true);
+      return { ...s, source: 'relogin' };
+    }
+    if (!autoLogin) throw new Error('Session expired. Enable "Auto Login" or start again.');
+    if (reloginCount >= MAX_RELOGINS) {
+      throw new Error(`Session expired ${MAX_RELOGINS} times. Stopping to avoid getting blocked.`);
+    }
+    const wait = RELOGIN_BACKOFF_MS[Math.min(reloginCount, RELOGIN_BACKOFF_MS.length - 1)];
+    reloginCount++;
+    status(`Session expired. Waiting ${Math.round(wait / 1000)}s before re-login (${reloginCount}/${MAX_RELOGINS})...`);
+    await delay(wait);
+    if (!isRunning) throw new Error('Stopped.');
+    const s = await obtainSession(true);
+    return { ...s, source: 'relogin' };
+  }
+
+  try {
+    let session = await obtainSession(false);
+
+    // Initial page load; if saved/manual session is stale, log in exactly once.
+    let html;
+    try {
+      html = await fetchRegistrationPage(session);
+    } catch (e) {
+      if (!(e instanceof SessionExpiredError)) throw e;
+      session = await relogin(session);
+      html = await fetchRegistrationPage(session);
+    }
+    if (session.source === 'manual') {
+      saveSession(sessionFile, rollNo || 'manual', session);
     }
 
-    callbacks.onStatusUpdate('Login successful. Fetching courses...');
-    const trackedCourses = await fetchTrackedCourses(session.cookies, session.studentHash, ipAddress, courseIdsToTrack);
+    // Build the tracked list.
+    const wanted = courses.map(c => {
+      const [code, slot] = c.split(':').map(s => s.trim());
+      return { code, slot };
+    });
+    const { rows } = parseCourses(html, session.studentHash);
+    const tracked = new Map(); // courseHash -> info
+    const missing = [];
 
-    if (trackedCourses.size === 0) {
-      throw new Error("No courses to track. They may already be registered or the list is empty.");
+    for (const w of wanted) {
+      const row = rows.find(r => r.courseCode === w.code && (!w.slot || r.courseSlot === w.slot || (r.courseSlot || '').includes(w.slot)));
+      if (!row || !row.courseHash) { missing.push(`${w.code}:${w.slot}`); continue; }
+      if (row.state === 'registered') { callbacks.onCourseRegistered({ courseCode: row.courseCode, courseSlot: w.slot }); continue; }
+      if (row.state === 'blocked') { callbacks.onCourseBlocked({ courseCode: row.courseCode, courseSlot: w.slot }); continue; }
+      tracked.set(row.courseHash, { courseCode: row.courseCode, courseSlot: w.slot, seats: row.seats, posts: 0 });
     }
-    
-    if (!isRunning) return;
 
-    callbacks.onStatusUpdate(`Now tracking ${trackedCourses.size} course(s). Monitoring for seat availability...`);
-    await handlerLogic(session, ipAddress, trackedCourses, autoLogin, credentials, callbacks);
+    if (missing.length) status(`Not found on page (check code/slot): ${missing.join(', ')}`);
+    if (tracked.size === 0) {
+      status('Nothing left to register.');
+      return;
+    }
+
+    status(`Tracking ${tracked.size} course(s). Checking every ${POLL_INTERVAL_MS / 1000}s...`);
+    let consecutiveErrors = 0;
+
+    while (isRunning && tracked.size > 0) {
+      let page;
+      try {
+        page = parseCourses(await fetchRegistrationPage(session), session.studentHash);
+        consecutiveErrors = 0;
+      } catch (e) {
+        if (e instanceof SuspendedError) throw e;
+        if (e instanceof SessionExpiredError) { session = await relogin(session); continue; }
+        consecutiveErrors++;
+        const wait = consecutiveErrors >= MAX_CONSECUTIVE_ERRORS ? 30000 : POLL_INTERVAL_MS * 2;
+        status(`Request failed (${e.message}). Retrying in ${wait / 1000}s...`);
+        await delay(wait);
+        continue;
+      }
+
+      if (page.alert) status(`Portal says: ${page.alert}`);
+
+      // Update state of tracked courses.
+      let target = null;
+      for (const row of page.rows) {
+        const info = row.courseHash && tracked.get(row.courseHash);
+        if (!info) continue;
+        if (row.state === 'registered') {
+          tracked.delete(row.courseHash);
+          callbacks.onCourseRegistered(info);
+          status(`Registered: ${info.courseCode}`);
+          continue;
+        }
+        if (row.state === 'blocked') {
+          tracked.delete(row.courseHash);
+          callbacks.onCourseBlocked(info);
+          status(`Blocked: ${info.courseCode} - dropped.`);
+          continue;
+        }
+        if (row.seats !== info.seats) {
+          status(`Seats ${info.courseCode}: ${info.seats} -> ${row.seats}`);
+          info.seats = row.seats;
+        }
+      }
+      // Your list order decides priority when several courses have seats.
+      for (const [hash, info] of tracked) {
+        if (info.seats > 0) { target = hash; break; }
+      }
+
+      if (target) {
+        const info = tracked.get(target);
+        if (info.posts >= MAX_POSTS_PER_COURSE) {
+          tracked.delete(target);
+          callbacks.onCourseBlocked(info);
+          status(`${info.courseCode}: server refused ${MAX_POSTS_PER_COURSE} times (clash/ineligible?). Dropped so the account isn't flagged.`);
+          continue;
+        }
+        info.posts++;
+        status(`Seat open! Registering ${info.courseCode} (attempt ${info.posts}/${MAX_POSTS_PER_COURSE})...`);
+        try {
+          const code = await sendRegister(session, target);
+          status(`Register request for ${info.courseCode} sent (HTTP ${code}). Verifying...`);
+        } catch (e) {
+          if (e instanceof SuspendedError) throw e;
+          if (e instanceof SessionExpiredError) { session = await relogin(session); continue; }
+          status(`Register request failed: ${e.message}`);
+        }
+        await delay(AFTER_POST_DELAY_MS);
+        continue;
+      }
+
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    if (tracked.size === 0) status('All tracked courses handled. Stopping.');
   } catch (error) {
+    if (error instanceof SuspendedError) clearSavedSession(sessionFile);
     callbacks.onError(error.message);
   } finally {
     isRunning = false;
-    if (callbacks && callbacks.onStop) {
-      callbacks.onStop();
-    }
+    if (callbacks.onStop) callbacks.onStop();
   }
 }
 
 function stopAutomation() {
-  if (isRunning) {
-    isRunning = false;
-  }
+  isRunning = false;
 }
 
 module.exports = { startAutomation, stopAutomation };

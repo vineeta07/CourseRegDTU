@@ -89,6 +89,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('roll-no').disabled = isAutomationRunning;
     document.getElementById('password').disabled = isAutomationRunning;
     document.getElementById('auto-login').disabled = isAutomationRunning;
+    document.getElementById('manual-cookie').disabled = isAutomationRunning;
+    document.getElementById('manual-student-id').disabled = isAutomationRunning;
+    document.getElementById('clear-session-btn').disabled = isAutomationRunning;
 
     const courseRows = document.querySelectorAll('.course-row input, .course-row button');
     courseRows.forEach(element => {
@@ -130,15 +133,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
   addCourseBtn.addEventListener('click', () => addCourseRow());
 
+  document.getElementById('clear-session-btn').addEventListener('click', async () => {
+    await window.electronAPI.clearSession();
+    statusArea.textContent = 'Saved session cleared. Next start will log in once.';
+  });
+
   // Start the automation process
   startBtn.addEventListener('click', async () => {
     clearError();
     const rollNo = document.getElementById('roll-no').value.trim();
     const password = document.getElementById('password').value.trim();
     const autoLogin = document.getElementById('auto-login').checked;
+    const manualCookie = document.getElementById('manual-cookie').value.trim();
+    let manualStudentId = document.getElementById('manual-student-id').value.trim();
+    const idMatch = manualStudentId.match(/([a-f0-9]{24})\/?$/i);
+    if (idMatch) manualStudentId = idMatch[1];
 
-    if (!rollNo || !password) {
-      showError('Please enter both Roll Number and Password.');
+    if ((manualCookie && !manualStudentId) || (!manualCookie && manualStudentId)) {
+      showError('Enter both the Session Cookie and the Student ID, or leave both empty.');
+      return;
+    }
+    if (!manualCookie && (!rollNo || !password)) {
+      showError('Enter Roll Number and Password (or paste a browser session cookie).');
       return;
     }
 
@@ -166,6 +182,8 @@ document.addEventListener('DOMContentLoaded', () => {
       creds: { r: rollNo, p: password },
       courses: courses,
       autoLogin: autoLogin,
+      manualCookie,
+      manualStudentId,
     });
 
     if (!response.success) {
@@ -254,7 +272,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     try {
-      const parsedCourses = eval('(' + jsonText + ')');
+      const parsedCourses = JSON.parse(jsonText);
       if (!Array.isArray(parsedCourses)) {
         throw new Error('Input must be a JSON array.');
       }
