@@ -16,11 +16,14 @@ const cheerio = require('cheerio');
 
 // ---------------- Configuration ----------------
 const BASE_HOST = 'exam-setu.dtu.ac.in';
-const BASE_URL = `https://${BASE_HOST}`;
+const BASE_URL = process.env.EXAMSETU_BASE_URL || `https://${BASE_HOST}`; // override only for local testing
 
-const POLL_INTERVAL_MS = 2000;      // how often the registration page is checked
-const AFTER_POST_DELAY_MS = 2500;   // wait after a register request before re-checking
-const MAX_POSTS_PER_COURSE = 3;     // give up on a course after this many failed register attempts
+const POLL_INTERVAL_MS = 3000;      // how often the registration page is checked
+const AFTER_POST_DELAY_MS = 3000;   // wait after a register request before re-checking
+const MAX_POSTS_PER_COURSE = 2;     // give up on a course after this many failed register attempts
+const MAX_POSTS_PER_RUN = 10;       // hard cap on register requests in one run
+const MIN_GAP_MS = 1500;            // minimum gap between ANY two requests
+const MAX_REQUESTS_PER_MINUTE = 25; // hard rate limit across all requests
 const MAX_RELOGINS = 3;             // max automatic re-logins per run
 const RELOGIN_BACKOFF_MS = [15000, 45000, 120000];
 const MAX_CONSECUTIVE_ERRORS = 10;  // network/5xx errors in a row before slowing down
@@ -29,6 +32,9 @@ const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 
 let isRunning = false;
+let userAgent = USER_AGENT;
+let lastRequestAt = 0;
+const recentRequests = [];
 
 class SuspendedError extends Error {}
 class SessionExpiredError extends Error {}
@@ -40,7 +46,7 @@ function delay(ms) {
 
 function commonHeaders(extra = {}) {
   return {
-    'User-Agent': USER_AGENT,
+    'User-Agent': userAgent,
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
     ...extra,
@@ -89,8 +95,41 @@ function isLoginRedirect(response) {
   return body.length < 18000 && /Redirecting to \/student\/login/.test(body);
 }
 
+// Rate limiter: keeps a minimum gap between requests and a per-minute cap,
+// so the app never sends bursts no matter what the loop does.
+async function throttle() {
+  for (;;) {
+    const now = Date.now();
+    while (recentRequests.length && now - recentRequests[0] > 60000) recentRequests.shift();
+    const gapWait = lastRequestAt + MIN_GAP_MS - now;
+    const minuteWait = recentRequests.length >= MAX_REQUESTS_PER_MINUTE ? 60000 - (now - recentRequests[0]) + 50 : 0;
+    const wait = Math.max(gapWait, minuteWait);
+    if (wait <= 0) break;
+    await delay(wait);
+  }
+  lastRequestAt = Date.now();
+  recentRequests.push(lastRequestAt);
+}
+
+// Anything that looks like the server pushing back stops the run.
+const WARNING_RE = /suspend|blocked due|too many|multiple (altering|attempts|requests)|unusual activity|suspicious|rate limit|try again later/i;
+
+function checkPushback(response) {
+  if (response.statusCode === 403 || response.statusCode === 429) {
+    throw new SuspendedError(`Portal returned HTTP ${response.statusCode} (refused / too many requests). Stopping to protect your account. Wait a while before trying again.`);
+  }
+  const body = typeof response.body === 'string' ? response.body : '';
+  const $ = body.length < 500000 ? cheerio.load(body) : null;
+  const alertText = $ ? $('.alert, .swal2-content, .toast, .error, .flash').text().replace(/\s+/g, ' ').trim() : '';
+  if (alertText && WARNING_RE.test(alertText)) {
+    throw new SuspendedError(`Portal warning: "${alertText.slice(0, 200)}". Stopping to protect your account.`);
+  }
+}
+
 async function request(url, options) {
   const { default: got } = await import('got');
+  if (!isRunning) throw new Error('Stopped.');
+  await throttle();
   const response = await got(url, {
     responseType: 'text',
     followRedirect: false,
@@ -100,6 +139,7 @@ async function request(url, options) {
     ...options,
   });
   checkSuspended(response);
+  checkPushback(response);
   return response;
 }
 
@@ -205,22 +245,42 @@ function parseCourses(html, studentHash) {
     const courseCode = $(cells[1]).text().trim();
     const courseSlot = $(cells[3]).text().trim() || currentSlot;
     const seats = parseInt($(cells[4]).text().trim(), 10) || 0;
-    const action = row.find("form[action*='/student/courseRegister/']").attr('action');
+    const form = row.find("form[action*='/student/courseRegister/']").first();
+    const action = form.attr('action');
     const courseHash = courseHashFromAction(action, studentHash);
+    // Collect exactly the fields the browser would send (hidden inputs, CSRF tokens, ...).
+    const fields = {};
+    form.find('input[name], select[name], textarea[name]').each((_, el) => {
+      const e = $(el);
+      const type = (e.attr('type') || '').toLowerCase();
+      if ((type === 'checkbox' || type === 'radio') && e.attr('checked') === undefined) return;
+      if (type === 'submit' || type === 'button') return;
+      fields[e.attr('name')] = e.attr('value') || '';
+    });
+    const submit = form.find('button, input[type=submit]').first();
+    if (submit.attr('name')) fields[submit.attr('name')] = submit.attr('value') || '';
+    const canSubmit = form.length > 0 &&
+      submit.attr('disabled') === undefined && form.find('fieldset[disabled]').length === 0;
+    const method = (form.attr('method') || 'GET').toUpperCase();
     const bg = (row.attr('bgcolor') || '').toLowerCase();
     const state = bg === '#0ff288' ? 'registered' : bg === '#d4d3d2' ? 'blocked' : 'open';
 
-    if (courseCode) rows.push({ courseCode, courseSlot, seats, courseHash, state });
+    if (courseCode) rows.push({ courseCode, courseSlot, seats, courseHash, state, action, method, fields, canSubmit });
   });
 
   const alert = $('div.alert.alert-danger').first().text().replace(/\s+/g, ' ').trim();
   return { rows, alert };
 }
 
-async function sendRegister(session, courseHash) {
-  const response = await request(`${BASE_URL}/student/courseRegister/${session.studentHash}/${courseHash}`, {
-    method: 'POST',
-    body: '',
+// Submits the course's form exactly as the page defines it (same action, method and fields).
+async function sendRegister(session, row) {
+  const url = new URL(row.action, `${BASE_URL}/student/courseRegistration/${session.studentHash}`).toString();
+  if (!url.startsWith(BASE_URL + '/')) throw new Error('Form points outside the portal; refusing to submit.');
+  const body = querystring.stringify(row.fields || {});
+  const isGet = row.method === 'GET';
+  const response = await request(isGet ? `${url}${body ? (url.includes('?') ? '&' : '?') + body : ''}` : url, {
+    method: isGet ? 'GET' : 'POST',
+    ...(isGet ? {} : { body }),
     headers: commonHeaders({
       'Content-Type': 'application/x-www-form-urlencoded',
       'Origin': BASE_URL,
@@ -237,10 +297,14 @@ async function sendRegister(session, courseHash) {
 
 // ---------------- Main ----------------
 async function startAutomation(options, callbacks) {
-  const { credentials, courses, autoLogin, manualCookie, manualStudentId, sessionFile } = options;
+  const { credentials, courses, autoLogin, manualCookie, manualStudentId, sessionFile, watchOnly, browserUserAgent } = options;
   const rollNo = credentials && credentials.r;
   isRunning = true;
   let reloginCount = 0;
+  let postsThisRun = 0;
+  // If you paste your own browser's User-Agent, requests made with that browser's
+  // cookie look the same as the browser that created the session.
+  userAgent = (browserUserAgent && browserUserAgent.trim()) || USER_AGENT;
 
   const status = msg => { console.log(msg); callbacks.onStatusUpdate(msg); };
 
@@ -320,7 +384,7 @@ async function startAutomation(options, callbacks) {
       if (!row || !row.courseHash) { missing.push(`${w.code}:${w.slot}`); continue; }
       if (row.state === 'registered') { callbacks.onCourseRegistered({ courseCode: row.courseCode, courseSlot: w.slot }); continue; }
       if (row.state === 'blocked') { callbacks.onCourseBlocked({ courseCode: row.courseCode, courseSlot: w.slot }); continue; }
-      tracked.set(row.courseHash, { courseCode: row.courseCode, courseSlot: w.slot, seats: row.seats, posts: 0 });
+      tracked.set(row.courseHash, { courseCode: row.courseCode, courseSlot: w.slot, seats: row.seats, posts: 0, row, lastFailedSeats: null });
     }
 
     if (missing.length) status(`Not found on page (check code/slot): ${missing.join(', ')}`);
@@ -329,7 +393,8 @@ async function startAutomation(options, callbacks) {
       return;
     }
 
-    status(`Tracking ${tracked.size} course(s). Checking every ${POLL_INTERVAL_MS / 1000}s...`);
+    status(`${watchOnly ? '[WATCH ONLY - nothing will be submitted] ' : ''}Tracking ${tracked.size} course(s): ` +
+      `${Array.from(tracked.values()).map(i => `${i.courseCode}(${i.seats} seats)`).join(', ')}. Checking every ${POLL_INTERVAL_MS / 1000}s...`);
     let consecutiveErrors = 0;
 
     while (isRunning && tracked.size > 0) {
@@ -366,18 +431,31 @@ async function startAutomation(options, callbacks) {
           status(`Blocked: ${info.courseCode} - dropped.`);
           continue;
         }
+        info.row = row;
         if (row.seats !== info.seats) {
           status(`Seats ${info.courseCode}: ${info.seats} -> ${row.seats}`);
           info.seats = row.seats;
         }
       }
       // Your list order decides priority when several courses have seats.
+      // After a failed attempt, a course is only retried once its seat count changes,
+      // so the same refused request is never repeated.
       for (const [hash, info] of tracked) {
-        if (info.seats > 0) { target = hash; break; }
+        if (info.seats > 0 && info.row.canSubmit && info.lastFailedSeats !== info.seats) { target = hash; break; }
+      }
+
+      if (target && watchOnly) {
+        const info = tracked.get(target);
+        status(`[WATCH ONLY] ${info.courseCode} has ${info.seats} seat(s) and would be registered now.`);
+        info.lastFailedSeats = info.seats; // report once per seat change
+        target = null;
       }
 
       if (target) {
         const info = tracked.get(target);
+        if (postsThisRun >= MAX_POSTS_PER_RUN) {
+          throw new Error(`Reached the safety limit of ${MAX_POSTS_PER_RUN} register requests in one run. Stopping. Check the portal manually.`);
+        }
         if (info.posts >= MAX_POSTS_PER_COURSE) {
           tracked.delete(target);
           callbacks.onCourseBlocked(info);
@@ -385,9 +463,11 @@ async function startAutomation(options, callbacks) {
           continue;
         }
         info.posts++;
+        postsThisRun++;
+        info.lastFailedSeats = info.seats; // cleared implicitly if the next page shows it registered
         status(`Seat open! Registering ${info.courseCode} (attempt ${info.posts}/${MAX_POSTS_PER_COURSE})...`);
         try {
-          const code = await sendRegister(session, target);
+          const code = await sendRegister(session, info.row);
           status(`Register request for ${info.courseCode} sent (HTTP ${code}). Verifying...`);
         } catch (e) {
           if (e instanceof SuspendedError) throw e;

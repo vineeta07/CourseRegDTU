@@ -53,6 +53,10 @@
         <label for="manual-student-id">Student ID (from URL)</label>
         <input type="text" id="manual-student-id" placeholder="e.g. 66b0f2321af8ca2e2591dc58">
       </div>
+      <div class="input-group">
+        <label for="browser-ua">Your Browser's User-Agent (optional)</label>
+        <input type="text" id="browser-ua" placeholder="Paste from the browser you copied the cookie from">
+      </div>
       <button id="clear-session-btn">Forget Saved Session</button>
     </div>
 
@@ -72,6 +76,13 @@
     </div>
 
     <div class="card">
+      <div class="input-group">
+        <label class="checkbox-label">
+          <input type="checkbox" id="watch-only" checked>
+          Watch only (test mode: shows what it would do, sends no register requests)
+        </label>
+      </div>
+      <p class="hint">Safety limits: max 25 requests/min, 1.5s minimum gap, 2 register tries per course, 10 per run. Stops on any warning from the portal. Don't keep refreshing the portal in your browser while this runs.</p>
       <div class="automation-controls">
         <button id="start-btn">Start Automation</button>
         <button id="stop-btn" class="hidden">Stop Automation</button>

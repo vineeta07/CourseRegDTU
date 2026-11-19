@@ -23,7 +23,15 @@ function createWindow() {
   win.loadFile('index.html');
 }
 
-app.whenReady().then(createWindow);
+// Only one copy of the app may run, so requests are never doubled up.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
+  });
+  app.whenReady().then(createWindow);
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -42,7 +50,7 @@ ipcMain.handle('start-automation', async (event, data) => {
     return { success: false, error: 'Automation is already running.' };
   }
 
-  const { creds, courses, autoLogin, manualCookie, manualStudentId } = data;
+  const { creds, courses, autoLogin, manualCookie, manualStudentId, watchOnly, browserUserAgent } = data;
   automationRunning = true;
 
   try {
@@ -52,6 +60,8 @@ ipcMain.handle('start-automation', async (event, data) => {
       autoLogin,
       manualCookie,
       manualStudentId,
+      watchOnly,
+      browserUserAgent,
       sessionFile: path.join(app.getPath('userData'), 'session.json'),
     }, {
       onStatusUpdate: (message) => win.webContents.send('status-update', message),

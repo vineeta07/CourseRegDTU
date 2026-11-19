@@ -92,6 +92,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('manual-cookie').disabled = isAutomationRunning;
     document.getElementById('manual-student-id').disabled = isAutomationRunning;
     document.getElementById('clear-session-btn').disabled = isAutomationRunning;
+    document.getElementById('watch-only').disabled = isAutomationRunning;
+    document.getElementById('browser-ua').disabled = isAutomationRunning;
 
     const courseRows = document.querySelectorAll('.course-row input, .course-row button');
     courseRows.forEach(element => {
@@ -153,6 +155,10 @@ document.addEventListener('DOMContentLoaded', () => {
       showError('Enter both the Session Cookie and the Student ID, or leave both empty.');
       return;
     }
+    if (!document.getElementById('watch-only').checked &&
+        !confirm('Watch-only is OFF: the app will submit register requests. Continue?')) {
+      return;
+    }
     if (!manualCookie && (!rollNo || !password)) {
       showError('Enter Roll Number and Password (or paste a browser session cookie).');
       return;
@@ -184,6 +190,8 @@ document.addEventListener('DOMContentLoaded', () => {
       autoLogin: autoLogin,
       manualCookie,
       manualStudentId,
+      watchOnly: document.getElementById('watch-only').checked,
+      browserUserAgent: document.getElementById('browser-ua').value.trim(),
     });
 
     if (!response.success) {
