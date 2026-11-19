@@ -449,3 +449,13 @@ select { width: 100%; padding: 8px; border-radius: 6px; }
 #captcha-input { font-size: 1.4em; padding: 10px; letter-spacing: 3px; }
 .captcha-actions { display: flex; gap: 10px; }
 .captcha-actions button { flex: 1; }
+
+.log-header { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
+.log-header h3 { margin: 0; font-size: 1em; }
+.small-btn { padding: 4px 10px; font-size: 0.85em; }
+#activity-log { list-style: none; margin: 8px 0 0; padding: 8px; max-height: 260px; overflow-y: auto; font-family: ui-monospace, Consolas, monospace; font-size: 0.82em; background: #f6f7f9; border-radius: 8px; }
+#activity-log li { padding: 3px 0; border-bottom: 1px solid #e5e7eb; word-break: break-word; }
+#activity-log .timestamp { color: #6b7280; margin-right: 6px; }
+#activity-log .log-warn, .status-warn { color: #b45309; }
+#activity-log .log-error, .status-error { color: #dc2626; }
+#activity-log .log-good, .status-good { color: #15803d; }

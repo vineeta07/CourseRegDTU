@@ -186,9 +186,12 @@ Or click the **`</>`** button and paste a list:
 2. Keep **"Watch only"** **ticked** (it is ticked by default).
 3. Press **Start Automation**.
 
-In Watch-only mode the app only **looks**; it never clicks Register. Check the status line:
+In Watch-only mode the app only **looks**; it never clicks Register.
+Every message is kept in the **Activity log** under the Start/Stop button (newest on top). Check it:
 - `Tracking N course(s): HU317(0 seats), ...` → it found your courses ✅
-- `Not found on page (check code/slot): ...` → fix the code or slot.
+- `WARNING - not found on the page ...` → fix the code or slot.
+- `Registration is not open yet ...` → registration is closed right now. You can only fully test
+  while registration is open, but this confirms your cookie/login works.
 - If a seat is free it says `[WATCH ONLY] HU317 has 3 seat(s) and would be registered now`.
 
 Press **Stop Automation** when you're happy.
@@ -254,7 +257,8 @@ on the website if needed.
 
 | Message / problem | What to do |
 |---|---|
-| `Not found on page (check code/slot)` | Code or slot is spelled differently from the portal. Copy them exactly. |
+| `WARNING - not found on the page` | Code or slot is spelled differently from the portal. The message lists courses that *are* on the page; copy yours exactly. |
+| `Registration is not open yet` / `no course list on the page` | Normal before registration opens. Leave it running: it keeps checking and starts by itself the moment the course list appears. |
 | `Your browser session cookie has expired` | Log in on the website again, copy a fresh cookie (2a), start again. |
 | `Invalid Roll Number or Password` | Check your credentials. |
 | `Server refused 2 times (clash/ineligible?)` | The portal won't let you take that course (slot clash, not eligible, credit limit). Check on the website. |

@@ -93,12 +93,17 @@
           <option value="fast">Fast - every 2 seconds (use only during the registration rush)</option>
         </select>
       </div>
-      <p class="hint">Safety limits: max 40 requests/min, 2 register tries per course, 10 per run. Stops on any warning from the portal. Don't keep refreshing the portal in your browser while this runs.</p>
+      <p class="hint">Safety limits: max 40 requests/min, 2 register tries per course, 15 submits per run. If registration isn't open yet, it waits for it to open. Stops on any warning from the portal. Don't keep refreshing the portal in your browser while this runs.</p>
       <div class="automation-controls">
         <button id="start-btn">Start Automation</button>
         <button id="stop-btn" class="hidden">Stop Automation</button>
       </div>
       <div id="status-area"></div>
+      <div class="log-header">
+        <h3>Activity log</h3>
+        <button id="clear-log-btn" class="small-btn">Clear</button>
+      </div>
+      <ul id="activity-log"></ul>
     </div>
 
     <div class="card registered-courses">

@@ -41,6 +41,7 @@ const recentRequests = [];
 
 class SuspendedError extends Error {}
 class SessionExpiredError extends Error {}
+class NotOpenError extends Error {}
 
 // ---------------- Helpers ----------------
 function delay(ms) {
@@ -216,6 +217,10 @@ async function fetchRegistrationPage(session) {
   session.cookies = mergeCookies(response.headers, session.cookies);
 
   if (isLoginRedirect(response)) throw new SessionExpiredError('Session expired.');
+  if (response.statusCode >= 300 && response.statusCode < 400) {
+    // Logged in, but the portal sends us elsewhere (e.g. home page): registration not open.
+    throw new NotOpenError(`Registration page redirects to ${response.headers.location || 'another page'}`);
+  }
   if (response.statusCode !== 200) {
     const err = new Error(`Registration page returned HTTP ${response.statusCode}`);
     err.statusCode = response.statusCode;
@@ -566,39 +571,64 @@ async function startAutomation(options, callbacks) {
   try {
     let session = await obtainSession(false);
 
-    // Initial page load; if saved/manual session is stale, log in exactly once.
-    let html;
-    try {
-      html = await fetchRegistrationPage(session);
-    } catch (e) {
-      if (!(e instanceof SessionExpiredError)) throw e;
-      session = await relogin(session);
-      html = await fetchRegistrationPage(session);
-    }
-    if (session.source === 'manual') {
-      saveSession(sessionFile, rollNo || 'manual', session);
-    }
-
-    // Build the tracked list.
     const wanted = courses.map(c => {
-      const [code, slot] = c.split(':').map(s => s.trim());
+      const [code, slot] = c.split(':').map(x => x.trim());
       return { code, slot };
     });
-    const { rows } = parseCourses(html, session.studentHash);
     const tracked = new Map(); // courseHash -> info
-    const missing = [];
+    let savedManual = false;
+    let waitingSince = null;
 
-    for (const w of wanted) {
-      const row = rows.find(r => r.courseCode === w.code && (!w.slot || r.courseSlot === w.slot || (r.courseSlot || '').includes(w.slot)));
-      if (!row || !row.courseHash) { missing.push(`${w.code}:${w.slot}`); continue; }
-      if (row.state === 'registered') { callbacks.onCourseRegistered({ courseCode: row.courseCode, courseSlot: w.slot }); continue; }
-      if (row.state === 'blocked') { callbacks.onCourseBlocked({ courseCode: row.courseCode, courseSlot: w.slot }); continue; }
-      tracked.set(row.courseHash, { courseCode: row.courseCode, courseSlot: w.slot, seats: row.seats, posts: 0, row, lastFailedSeats: null });
+    // Load the page until the course list is there. If registration isn't open yet,
+    // keep waiting (at the normal checking speed) instead of giving up.
+    while (isRunning) {
+      let html;
+      try {
+        html = await fetchRegistrationPage(session);
+      } catch (e) {
+        if (e instanceof SessionExpiredError) { session = await relogin(session); continue; }
+        if (e instanceof NotOpenError || e.statusCode) {
+          if (!waitingSince) waitingSince = Date.now();
+          status(`Registration is not open yet (${e.message}). Waiting for it to open... ` +
+            `last checked ${new Date().toLocaleTimeString()}`);
+          await delay(POLL_INTERVAL_MS);
+          continue;
+        }
+        throw e;
+      }
+      if (session.source === 'manual' && !savedManual) {
+        saveSession(sessionFile, rollNo || 'manual', session);
+        savedManual = true;
+      }
+
+      const { rows } = parseCourses(html, session.studentHash);
+      if (rows.length === 0) {
+        if (!waitingSince) waitingSince = Date.now();
+        status(`Logged in OK, but there is no course list on the page (registration is probably closed). ` +
+          `Waiting for it to open... last checked ${new Date().toLocaleTimeString()}`);
+        await delay(POLL_INTERVAL_MS);
+        continue;
+      }
+      if (waitingSince) status('Registration is OPEN - course list found!');
+
+      lastHtml = html;
+      const missing = [];
+      for (const w of wanted) {
+        const row = rows.find(r => r.courseCode === w.code && (!w.slot || r.courseSlot === w.slot || (r.courseSlot || '').includes(w.slot)));
+        if (!row || !row.courseHash) { missing.push(`${w.code} (${w.slot})`); continue; }
+        if (row.state === 'registered') { callbacks.onCourseRegistered({ courseCode: row.courseCode, courseSlot: w.slot }); status(`${row.courseCode} is already registered.`); continue; }
+        if (row.state === 'blocked') { callbacks.onCourseBlocked({ courseCode: row.courseCode, courseSlot: w.slot }); status(`${row.courseCode} is blocked for you on the portal.`); continue; }
+        tracked.set(row.courseHash, { courseCode: row.courseCode, courseSlot: w.slot, seats: row.seats, posts: 0, row, lastFailedSeats: null });
+      }
+      if (missing.length) {
+        status(`WARNING - not found on the page, check the code and slot: ${missing.join(', ')}. ` +
+          `Courses on the page include: ${rows.slice(0, 8).map(r => `${r.courseCode} (${r.courseSlot})`).join(', ')}${rows.length > 8 ? ', ...' : ''}`);
+      }
+      break;
     }
-
-    if (missing.length) status(`Not found on page (check code/slot): ${missing.join(', ')}`);
+    if (!isRunning) return;
     if (tracked.size === 0) {
-      status('Nothing left to register.');
+      status('None of your courses can be registered (all already registered, blocked or not found). Stopping.');
       return;
     }
 

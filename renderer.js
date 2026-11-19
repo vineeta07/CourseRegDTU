@@ -6,6 +6,29 @@ document.addEventListener('DOMContentLoaded', () => {
   const startBtn = document.getElementById('start-btn');
   const stopBtn = document.getElementById('stop-btn');
   const statusArea = document.getElementById('status-area');
+  const activityLog = document.getElementById('activity-log');
+
+  // Every message goes into the log (newest on top), so nothing is lost.
+  function logLine(message, kind = 'info') {
+    const li = document.createElement('li');
+    li.className = `log-${kind}`;
+    const time = document.createElement('span');
+    time.className = 'timestamp';
+    time.textContent = new Date().toLocaleTimeString('en-IN');
+    li.appendChild(time);
+    li.appendChild(document.createTextNode(' ' + message));
+    activityLog.prepend(li);
+    while (activityLog.children.length > 300) activityLog.lastChild.remove();
+  }
+  let lastLogged = '';
+  function setStatus(message, kind = 'info') {
+    statusArea.textContent = message;
+    statusArea.className = `status-${kind}`;
+    // "Waiting..." messages repeat every few seconds; log them once.
+    const key = message.replace(/last checked .*$/, '');
+    if (key !== lastLogged) { logLine(message, kind); lastLogged = key; }
+  }
+  document.getElementById('clear-log-btn').addEventListener('click', () => { activityLog.innerHTML = ''; lastLogged = ''; });
   const errorArea = document.getElementById('error-area');
   const registeredList = document.getElementById('registered-list');
   const blockedList = document.getElementById('blocked-list');
@@ -138,7 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('clear-session-btn').addEventListener('click', async () => {
     await window.electronAPI.clearSession();
-    statusArea.textContent = 'Saved session cleared. Next start will log in once.';
+    setStatus('Saved session cleared. Next start will log in once.');
   });
 
   // Start the automation process
@@ -183,7 +206,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     isAutomationRunning = true;
     setUIState(isAutomationRunning);
-    statusArea.textContent = 'Starting automation...';
+    registeredList.innerHTML = '';
+    blockedList.innerHTML = '';
+    setStatus('Starting automation...');
 
     const response = await window.electronAPI.startAutomation({
       creds: { r: rollNo, p: password },
@@ -200,9 +225,9 @@ document.addEventListener('DOMContentLoaded', () => {
       showError(response.error);
       isAutomationRunning = false;
       setUIState(isAutomationRunning);
-      statusArea.textContent = 'Automation failed to start.';
+      setStatus('Automation failed to start: ' + response.error, 'error');
     } else {
-      statusArea.textContent = 'Automation is running. Monitoring courses...';
+      setStatus('Automation is running...');
     }
   });
 
@@ -211,28 +236,37 @@ document.addEventListener('DOMContentLoaded', () => {
     await window.electronAPI.stopAutomation();
     isAutomationRunning = false;
     setUIState(isAutomationRunning);
-    statusArea.textContent = 'Automation stopped by user.';
-    registeredList.innerHTML = '';
-    blockedList.innerHTML = '';
+    setStatus('Stopped by you.');
   });
 
   // Listen for status updates
   window.electronAPI.onStatusUpdate((event, message) => {
-    statusArea.textContent = message;
+    const kind = /^WARNING|not found|refused|failed|safety limit/i.test(message) ? 'warn'
+      : /Registered:|is OPEN|already registered/i.test(message) ? 'good' : 'info';
+    setStatus(message, kind);
+  });
+
+  // Automation ended (finished, error or stopped): reset the buttons, keep the last message.
+  window.electronAPI.onStopped(() => {
+    isAutomationRunning = false;
+    setUIState(isAutomationRunning);
+    logLine('Automation stopped.');
   });
 
   // Listen for course registration updates
   window.electronAPI.onCourseRegistered((event, course) => {
     const li = document.createElement('li');
     const timestamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    li.innerHTML = `${course.courseCode} (Slot: ${course.courseSlot}) - Registered! <span class="timestamp">${timestamp}</span>`;
+    li.textContent = `${course.courseCode} (Slot: ${course.courseSlot}) - Registered! `;
+    const t = document.createElement('span'); t.className = 'timestamp'; t.textContent = timestamp; li.appendChild(t);
     registeredList.appendChild(li);
   });
 
   window.electronAPI.onCourseBlocked((event, course) => {
     const li = document.createElement('li');
     const timestamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    li.innerHTML = `${course.courseCode} (Slot: ${course.courseSlot}) - Blocked! <span class="timestamp">${timestamp}</span>`;
+    li.textContent = `${course.courseCode} (Slot: ${course.courseSlot}) - Blocked! `;
+    const t = document.createElement('span'); t.className = 'timestamp'; t.textContent = timestamp; li.appendChild(t);
     blockedList.appendChild(li);
   });
 
@@ -241,7 +275,7 @@ document.addEventListener('DOMContentLoaded', () => {
     showError(errorMessage);
     isAutomationRunning = false;
     setUIState(isAutomationRunning);
-    statusArea.textContent = 'An error occurred.';
+    setStatus('Error: ' + errorMessage, 'error');
   });
 
   // ---------- Captcha prompt ----------

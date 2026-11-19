@@ -135,7 +135,7 @@ ipcMain.handle('start-automation', async (event, data) => {
       openManualWindow,
       onStop: () => {
         automationRunning = false;
-        win.webContents.send('status-update', 'Automation stopped.');
+        win.webContents.send('automation-stopped');
       },
     });
     return { success: true };

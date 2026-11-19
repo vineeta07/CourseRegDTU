@@ -13,4 +13,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onCourseRegistered: (callback) => ipcRenderer.on('course-registered', callback),
   onCourseBlocked: (callback) => ipcRenderer.on('course-blocked', callback),
   onError: (callback) => ipcRenderer.on('automation-error', callback),
+  onStopped: (callback) => ipcRenderer.on('automation-stopped', callback),
 });
