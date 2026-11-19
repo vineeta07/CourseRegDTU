@@ -441,3 +441,11 @@ h2 {
 .hint { font-size: 0.85em; opacity: 0.8; margin: 0 0 10px; }
 
 select { width: 100%; padding: 8px; border-radius: 6px; }
+
+#captcha-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+#captcha-modal.hidden { display: none; }
+.captcha-box { background: #1e1e2e; color: #fff; padding: 20px; border-radius: 10px; width: 420px; max-width: 90vw; display: flex; flex-direction: column; gap: 12px; }
+#captcha-img { background: #fff; border-radius: 6px; max-width: 100%; min-height: 60px; object-fit: contain; image-rendering: pixelated; }
+#captcha-input { font-size: 1.4em; padding: 10px; letter-spacing: 3px; }
+.captcha-actions { display: flex; gap: 10px; }
+.captcha-actions button { flex: 1; }

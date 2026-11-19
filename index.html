@@ -116,6 +116,19 @@
     </div>
   </div>
 
+  <div id="captcha-modal" class="hidden">
+    <div class="modal-content captcha-box">
+      <h3 id="captcha-title">Captcha</h3>
+      <p class="hint">Type the characters you see and press Enter. <span id="captcha-timer"></span></p>
+      <img id="captcha-img" alt="captcha">
+      <input type="text" id="captcha-input" autocomplete="off" spellcheck="false" placeholder="Type captcha here">
+      <div class="captcha-actions">
+        <button id="captcha-submit">Verify &amp; Register</button>
+        <button id="captcha-manual">Open portal page instead</button>
+      </div>
+    </div>
+  </div>
+
   <div id="json-input-modal" class="hidden">
     <div class="modal-content">
       <div class="modal-header">

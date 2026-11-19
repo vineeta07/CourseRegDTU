@@ -21,7 +21,9 @@ const BASE_URL = process.env.EXAMSETU_BASE_URL || `https://${BASE_HOST}`; // ove
 const POLL_SPEEDS = { normal: 3000, fast: 2000 }; // how often the registration page is checked
 const AFTER_POST_DELAY_MS = 1200;   // wait after a register request before checking it worked
 const MAX_POSTS_PER_COURSE = 2;     // give up on a course after this many failed register attempts
-const MAX_POSTS_PER_RUN = 10;       // hard cap on register requests in one run
+const MAX_POSTS_PER_RUN = 15;       // hard cap on register + captcha submits in one run
+const MAX_CAPTCHA_TRIES = 3;        // wrong-captcha retries per register attempt
+const CAPTCHA_ANSWER_TIMEOUT_MS = 90000; // how long to wait for you to type the captcha
 const MIN_GAP_MS = 1000;            // minimum gap between page loads
 const MIN_GAP_REGISTER_MS = 250;    // a register click right after the page showed a free seat
 const MAX_REQUESTS_PER_MINUTE = 40; // hard rate limit across all requests
@@ -295,13 +297,215 @@ async function sendRegister(session, row) {
   if (isLoginRedirect(response) && !/courseRegistration/.test(response.headers.location || '')) {
     throw new SessionExpiredError('Session expired.');
   }
-  return response.statusCode;
+  response.requestUrl = url;
+  return response;
+}
+
+// ---------------- Captcha (you type it, the app submits it) ----------------
+const CAPTCHA_RE = /captcha|security.?code|verification.?code|verify.?code/i;
+
+function looksCaptcha($, el) {
+  const e = $(el);
+  return CAPTCHA_RE.test([e.attr('name'), e.attr('id'), e.attr('placeholder'), e.attr('class'), e.attr('src'), e.attr('alt')].join(' '));
+}
+
+// Finds a captcha on a page. If formAction is given, only the form with that action is considered.
+// Returns null (no captcha), { kind: 'widget' } (Google/hCaptcha style: needs the real page),
+// { kind: 'unknown' } (mentions captcha but layout not understood), or a typed captcha form.
+function findCaptcha(html, pageUrl, formAction) {
+  if (!html || typeof html !== 'string') return null;
+  const $ = cheerio.load(html);
+  if ($('.g-recaptcha, .h-captcha, .cf-turnstile, [data-sitekey], iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="turnstile"]').length) {
+    return { kind: 'widget' };
+  }
+  let forms = $('form');
+  if (formAction) forms = forms.filter((_, f) => $(f).attr('action') === formAction);
+
+  let form = null, input = null;
+  forms.each((_, f) => {
+    if (form) return;
+    const fi = $(f).find('input').filter((_, el) => {
+      const t = ($(el).attr('type') || 'text').toLowerCase();
+      return t !== 'hidden' && $(el).attr('name') && looksCaptcha($, el);
+    }).first();
+    if (fi.length) { form = $(f); input = fi; }
+  });
+
+  // Fallback: a captcha image on the page + a form with exactly one visible text box.
+  if (!form && $('img').filter((_, el) => looksCaptcha($, el)).length) {
+    forms.each((_, f) => {
+      if (form) return;
+      const texts = $(f).find('input[name]').filter((_, el) => ['text', ''].includes(($(el).attr('type') || '').toLowerCase()));
+      if (texts.length === 1) { form = $(f); input = texts.first(); }
+    });
+  }
+
+  if (!form) {
+    if (formAction) return null;
+    return /captcha/i.test($('body').text() + $('img').map((_, el) => $(el).attr('src')).get().join(' ')) ? { kind: 'unknown' } : null;
+  }
+
+  const fields = {};
+  form.find('input[name], select[name], textarea[name]').each((_, el) => {
+    const e = $(el);
+    const type = (e.attr('type') || '').toLowerCase();
+    if (e.attr('name') === input.attr('name')) return;
+    if ((type === 'checkbox' || type === 'radio') && e.attr('checked') === undefined) return;
+    if (type === 'submit' || type === 'button') return;
+    fields[e.attr('name')] = e.attr('value') || '';
+  });
+  const submit = form.find('button[type=submit], input[type=submit], button:not([type])').first();
+  if (submit.attr('name')) fields[submit.attr('name')] = submit.attr('value') || '';
+
+  // The captcha picture: inside the form first, then anywhere on the page.
+  let img = form.find('img').filter((_, el) => looksCaptcha($, el)).first();
+  if (!img.length) img = $('img').filter((_, el) => looksCaptcha($, el)).first();
+  if (!img.length) img = form.find('img').first();
+  let svg = form.find('svg').first();
+  if (!svg.length) svg = $('[id*="captcha" i] svg, [class*="captcha" i] svg').first();
+
+  let image = null;
+  if (img.length && img.attr('src')) image = { src: img.attr('src').startsWith('data:') ? img.attr('src') : new URL(img.attr('src'), pageUrl).toString() };
+  else if (svg.length) image = { svg: $.html(svg) };
+
+  return {
+    kind: 'text',
+    action: new URL(form.attr('action') || pageUrl, pageUrl).toString(),
+    method: (form.attr('method') || 'GET').toUpperCase(),
+    fields,
+    answerField: input.attr('name'),
+    image,
+  };
+}
+
+// Downloads the captcha picture ONCE with your session (same as the browser loading it).
+async function captchaImageDataUri(session, image, referer) {
+  if (!image) return null;
+  if (image.svg) return 'data:image/svg+xml;base64,' + Buffer.from(image.svg).toString('base64');
+  if (image.src.startsWith('data:')) return image.src;
+  if (!image.src.startsWith(BASE_URL + '/')) return null;
+  const response = await request(image.src, {
+    method: 'GET',
+    responseType: 'buffer',
+    minGap: MIN_GAP_REGISTER_MS,
+    headers: commonHeaders({ 'Accept': 'image/avif,image/webp,image/svg+xml,image/*,*/*;q=0.8', 'Referer': referer, 'Cookie': session.cookies }),
+  });
+  session.cookies = mergeCookies(response.headers, session.cookies);
+  const type = (response.headers['content-type'] || 'image/png').split(';')[0];
+  return `data:${type};base64,${Buffer.from(response.body).toString('base64')}`;
+}
+
+async function submitCaptcha(session, captcha, answer, referer) {
+  const body = querystring.stringify({ ...captcha.fields, [captcha.answerField]: answer });
+  const isGet = captcha.method === 'GET';
+  if (!captcha.action.startsWith(BASE_URL + '/')) throw new Error('Captcha form points outside the portal; refusing to submit.');
+  const url = isGet ? `${captcha.action}${captcha.action.includes('?') ? '&' : '?'}${body}` : captcha.action;
+  const response = await request(url, {
+    method: isGet ? 'GET' : 'POST',
+    ...(isGet ? {} : { body }),
+    minGap: MIN_GAP_REGISTER_MS,
+    headers: commonHeaders({
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Origin': BASE_URL,
+      'Referer': referer,
+      'Cookie': session.cookies,
+    }),
+  });
+  session.cookies = mergeCookies(response.headers, session.cookies);
+  response.requestUrl = url;
+  return response;
+}
+
+// After a submit: if the server redirects somewhere other than the registration page
+// (e.g. to a captcha page), load that page once. Returns { html, url } or null.
+async function followResult(session, response) {
+  const regPath = `/student/courseRegistration/${session.studentHash}`;
+  if (response.statusCode >= 300 && response.statusCode < 400) {
+    const loc = response.headers.location || '';
+    const next = new URL(loc, response.requestUrl || BASE_URL).toString();
+    if (!next.startsWith(BASE_URL + '/') || next.includes(regPath)) return null;
+    if (isLoginRedirect(response)) throw new SessionExpiredError('Session expired.');
+    const page = await request(next, {
+      method: 'GET',
+      minGap: MIN_GAP_REGISTER_MS,
+      headers: commonHeaders({ 'Referer': response.requestUrl, 'Cookie': session.cookies }),
+    });
+    session.cookies = mergeCookies(page.headers, session.cookies);
+    if (isLoginRedirect(page)) throw new SessionExpiredError('Session expired.');
+    return { html: page.body, url: next, getable: true };
+  }
+  if (response.statusCode === 200 && typeof response.body === 'string') {
+    return { html: response.body, url: response.requestUrl, getable: false };
+  }
+  return null;
+}
+
+// Registers one course, handling a captcha if the portal asks for one.
+async function attemptRegister(session, info, regHtml, ctx) {
+  const { status, callbacks, countPost } = ctx;
+  const regUrl = `${BASE_URL}/student/courseRegistration/${session.studentHash}`;
+
+  // Case A: the captcha box is already part of the course's form on the registration page.
+  let captcha = findCaptcha(regHtml, regUrl, info.row.action);
+  let pageUrl = regUrl;
+  let manualUrl = regUrl; // a page we can open in a window (POST results can't be reopened)
+
+  if (!captcha) {
+    // Case B: click Register; the portal may answer with a captcha page.
+    countPost();
+    const response = await sendRegister(session, info.row);
+    status(`Register request for ${info.courseCode} sent (HTTP ${response.statusCode}).`);
+    const page = await followResult(session, response);
+    if (!page) return;
+    captcha = findCaptcha(page.html, page.url);
+    pageUrl = page.url;
+    if (page.getable) manualUrl = page.url;
+    if (!captcha) return;
+  }
+
+  for (let tryNo = 1; tryNo <= MAX_CAPTCHA_TRIES && isRunning; tryNo++) {
+    if (captcha.kind !== 'text' || !captcha.image) {
+      await manualSolve(session, info, manualUrl, ctx,
+        captcha.kind === 'widget' ? 'This captcha needs the real page.' : 'Could not read the captcha automatically.');
+      return;
+    }
+    const image = await captchaImageDataUri(session, captcha.image, pageUrl);
+    if (!image) { await manualSolve(session, info, manualUrl, ctx, 'Could not load the captcha picture.'); return; }
+
+    status(`CAPTCHA for ${info.courseCode}! Type it in the app now (try ${tryNo}/${MAX_CAPTCHA_TRIES}).`);
+    const reply = await callbacks.askCaptcha({ courseCode: info.courseCode, image, tryNo, maxTries: MAX_CAPTCHA_TRIES, timeoutMs: CAPTCHA_ANSWER_TIMEOUT_MS });
+    if (!isRunning) return;
+    if (reply && reply.manual) { await manualSolve(session, info, manualUrl, ctx, 'You chose to solve it on the page.'); return; }
+    if (!reply || !reply.answer) { status(`No captcha answer for ${info.courseCode}. Going back to watching.`); return; }
+
+    countPost();
+    const response = await submitCaptcha(session, captcha, reply.answer, pageUrl);
+    status(`Captcha submitted for ${info.courseCode} (HTTP ${response.statusCode}). Verifying...`);
+    const page = await followResult(session, response);
+    const again = page && findCaptcha(page.html, page.url);
+    if (!again) return; // accepted (or back on the registration page); the main loop verifies
+    status(`Captcha for ${info.courseCode} was not accepted. New captcha...`);
+    captcha = again; pageUrl = page.url;
+    if (page.getable) manualUrl = page.url;
+  }
+}
+
+// Opens the real portal page (already logged in with your session) so you can finish by hand.
+async function manualSolve(session, info, url, ctx, reason) {
+  const { status, callbacks } = ctx;
+  if (!callbacks.openManualWindow) { status(`${reason} Open the portal and register ${info.courseCode} yourself.`); return; }
+  status(`${reason} Opening the portal page for ${info.courseCode}: solve the captcha and click Verify/Register, then close that window.`);
+  const cookies = await callbacks.openManualWindow({ url, cookies: session.cookies, userAgent, courseCode: info.courseCode });
+  if (cookies) session.cookies = cookies;
+  status('Portal window closed. Checking if the course got registered...');
 }
 
 // ---------------- Main ----------------
 async function startAutomation(options, callbacks) {
   const { credentials, courses, autoLogin, manualCookie, manualStudentId, sessionFile, watchOnly, browserUserAgent, speed } = options;
   const POLL_INTERVAL_MS = POLL_SPEEDS[speed] || POLL_SPEEDS.normal;
+  let lastHtml = '';
+  let lastAttempted = null;
   const rollNo = credentials && credentials.r;
   isRunning = true;
   let reloginCount = 0;
@@ -405,7 +609,8 @@ async function startAutomation(options, callbacks) {
     while (isRunning && tracked.size > 0) {
       let page;
       try {
-        page = parseCourses(await fetchRegistrationPage(session), session.studentHash);
+        lastHtml = await fetchRegistrationPage(session);
+        page = parseCourses(lastHtml, session.studentHash);
         consecutiveErrors = 0;
       } catch (e) {
         if (e instanceof SuspendedError) throw e;
@@ -418,6 +623,13 @@ async function startAutomation(options, callbacks) {
       }
 
       if (page.alert) status(`Portal says: ${page.alert}`);
+      // Wrong captcha that sent us back to the list: allow another try (not counted as a refusal).
+      if (page.alert && /captcha/i.test(page.alert) && lastAttempted && tracked.has(lastAttempted)) {
+        const info = tracked.get(lastAttempted);
+        info.lastFailedSeats = null;
+        info.posts = Math.max(0, info.posts - 1);
+      }
+      lastAttempted = null;
 
       // Update state of tracked courses.
       let target = null;
@@ -451,16 +663,15 @@ async function startAutomation(options, callbacks) {
 
       if (target && watchOnly) {
         const info = tracked.get(target);
-        status(`[WATCH ONLY] ${info.courseCode} has ${info.seats} seat(s) and would be registered now.`);
+        const cap = findCaptcha(lastHtml, `${BASE_URL}/student/courseRegistration/${session.studentHash}`, info.row.action);
+        status(`[WATCH ONLY] ${info.courseCode} has ${info.seats} seat(s) and would be registered now` +
+          (cap ? ` (captcha detected on the page: ${cap.kind === 'text' ? 'you will be asked to type it' : 'portal window will open'}).` : '.'));
         info.lastFailedSeats = info.seats; // report once per seat change
         target = null;
       }
 
       if (target) {
         const info = tracked.get(target);
-        if (postsThisRun >= MAX_POSTS_PER_RUN) {
-          throw new Error(`Reached the safety limit of ${MAX_POSTS_PER_RUN} register requests in one run. Stopping. Check the portal manually.`);
-        }
         if (info.posts >= MAX_POSTS_PER_COURSE) {
           tracked.delete(target);
           callbacks.onCourseBlocked(info);
@@ -468,15 +679,24 @@ async function startAutomation(options, callbacks) {
           continue;
         }
         info.posts++;
-        postsThisRun++;
         info.lastFailedSeats = info.seats; // cleared implicitly if the next page shows it registered
         status(`Seat open! Registering ${info.courseCode} (attempt ${info.posts}/${MAX_POSTS_PER_COURSE})...`);
         try {
-          const code = await sendRegister(session, info.row);
-          status(`Register request for ${info.courseCode} sent (HTTP ${code}). Verifying...`);
+          lastAttempted = target;
+          await attemptRegister(session, info, lastHtml, {
+            status,
+            callbacks,
+            countPost: () => {
+              if (postsThisRun >= MAX_POSTS_PER_RUN) {
+                throw new Error(`Reached the safety limit of ${MAX_POSTS_PER_RUN} submits in one run. Stopping. Check the portal manually.`);
+              }
+              postsThisRun++;
+            },
+          });
         } catch (e) {
           if (e instanceof SuspendedError) throw e;
           if (e instanceof SessionExpiredError) { session = await relogin(session); continue; }
+          if (/safety limit/.test(e.message)) throw e;
           status(`Register request failed: ${e.message}`);
         }
         await delay(AFTER_POST_DELAY_MS);

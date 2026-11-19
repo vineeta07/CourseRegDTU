@@ -40,3 +40,17 @@ instant; further ones wait 5s and 20s, max 3.
 - Stops immediately on HTTP 403/429, any warning like "too many requests"/"blocked"/"suspended",
   or the Device Access Suspended page.
 - Only one copy of the app can run at a time. Don't also keep refreshing the portal in your browser.
+
+## Captcha
+
+If the portal asks for a captcha after clicking a course, the app does **not** give up:
+
+1. **Normal picture captcha:** the app beeps, jumps to the front and shows the captcha picture.
+   Type it and press **Enter** (or click *Verify & Register*). The app submits it instantly with your session.
+   Wrong answer -> it shows the new captcha (up to 3 tries). You have 90 seconds to answer.
+2. **Anything else** (Google "I'm not a robot", or a layout the app can't read), or if you click
+   *Open portal page instead*: a window opens with the real portal page, already logged in.
+   Solve the captcha and click Verify/Register there, then **close that window**.
+   The app then checks whether the course got registered and continues.
+
+Stay at the computer during registration: the captcha always needs you.

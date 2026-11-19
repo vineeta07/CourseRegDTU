@@ -244,6 +244,66 @@ document.addEventListener('DOMContentLoaded', () => {
     statusArea.textContent = 'An error occurred.';
   });
 
+  // ---------- Captcha prompt ----------
+  const captchaModal = document.getElementById('captcha-modal');
+  const captchaImg = document.getElementById('captcha-img');
+  const captchaInput = document.getElementById('captcha-input');
+  const captchaTitle = document.getElementById('captcha-title');
+  const captchaTimer = document.getElementById('captcha-timer');
+  let currentCaptchaId = null;
+  let captchaCountdown = null;
+
+  function beep() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.25, 0.5].forEach(t => {
+        const o = ctx.createOscillator(); const g = ctx.createGain();
+        o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+        g.gain.setValueAtTime(0.3, ctx.currentTime + t);
+        o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.15);
+      });
+    } catch (_) {}
+  }
+
+  function closeCaptcha() {
+    captchaModal.classList.add('hidden');
+    clearInterval(captchaCountdown);
+    currentCaptchaId = null;
+  }
+
+  async function answerCaptcha(manual) {
+    if (currentCaptchaId === null) return;
+    const id = currentCaptchaId;
+    const answer = captchaInput.value.trim();
+    if (!manual && !answer) { captchaInput.focus(); return; }
+    closeCaptcha();
+    await window.electronAPI.sendCaptchaAnswer({ id, answer, manual });
+  }
+
+  window.electronAPI.onCaptchaRequest((event, data) => {
+    currentCaptchaId = data.id;
+    captchaTitle.textContent = `Captcha for ${data.courseCode} (try ${data.tryNo}/${data.maxTries})`;
+    captchaImg.src = data.image;
+    captchaInput.value = '';
+    captchaModal.classList.remove('hidden');
+    captchaInput.focus();
+    beep();
+    let left = Math.round(data.timeoutMs / 1000);
+    captchaTimer.textContent = `${left}s left`;
+    clearInterval(captchaCountdown);
+    captchaCountdown = setInterval(() => {
+      left--; captchaTimer.textContent = `${Math.max(left, 0)}s left`;
+    }, 1000);
+  });
+
+  window.electronAPI.onCaptchaCancel((event, id) => {
+    if (id === currentCaptchaId) closeCaptcha();
+  });
+
+  document.getElementById('captcha-submit').addEventListener('click', () => answerCaptcha(false));
+  document.getElementById('captcha-manual').addEventListener('click', () => answerCaptcha(true));
+  captchaInput.addEventListener('keydown', e => { if (e.key === 'Enter') answerCaptcha(false); });
+
   // JSON Input Modal Logic
   jsonInputBtn.addEventListener('click', () => {
     jsonInputModal.classList.remove('hidden');
