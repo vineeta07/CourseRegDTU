@@ -21,19 +21,60 @@
     "directories": {
       "output": "dist"
     },
-    "files": ["**/*"],
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!.github/**",
+      "!*.md",
+      "!mermaid_diagram_*.png"
+    ],
+    "artifactName": "CourseRegistrar-${version}-${os}-${arch}.${ext}",
     "win": {
-      "target": ["nsis", "zip"],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "assets/dtulogo.ico"
     },
+    "portable": {
+      "artifactName": "CourseRegistrar-${version}-windows-portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
     "mac": {
-      "target": ["dmg", "zip"],
-      "icon": "assets/dtulogo.icns"
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "assets/dtulogo.png",
+      "category": "public.app-category.utilities",
+      "identity": null
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "icon": "assets/dtulogo.png",
-      "category": "Utility"
+      "category": "Utility",
+      "maintainer": "vineeta07"
     }
   },
   "dependencies": {
@@ -43,6 +84,6 @@
   },
   "devDependencies": {
     "electron": "^34.5.8",
-    "electron-builder": "^24.6.0"
+    "electron-builder": "^26.0.12"
   }
 }

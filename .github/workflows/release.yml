@@ -1,0 +1,69 @@
+name: Build installers
+
+# Push a tag like v1.0.0 to build Windows/Mac/Linux installers and publish them
+# on the GitHub Releases page. Can also be started by hand from the Actions tab.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            cmd: npx electron-builder --win --publish never
+          - os: macos-latest
+            cmd: npx electron-builder --mac --publish never
+          - os: ubuntu-latest
+            cmd: npx electron-builder --linux --publish never
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: ${{ matrix.cmd }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.AppImage
+            dist/*.deb
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          body: |
+            ## Download
+
+            | Your computer | File to download |
+            |---|---|
+            | Windows (install) | `CourseRegistrar-...-win-x64.exe` |
+            | Windows (no install, just run) | `CourseRegistrar-...-windows-portable.exe` |
+            | Mac with Apple chip (M1/M2/M3/M4) | `CourseRegistrar-...-mac-arm64.dmg` |
+            | Mac with Intel chip | `CourseRegistrar-...-mac-x64.dmg` |
+            | Linux | `.AppImage` or `.deb` |
+
+            See the README for first-time opening steps and how to use the app.

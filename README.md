@@ -10,7 +10,8 @@ and registers your chosen courses **automatically** the moment a seat opens.
 ---
 
 ## Contents
-1. [Install and run on your computer (local)](#1-install-and-run-on-your-computer-local)
+0. [Download and install (easiest, no setup)](#0-download-and-install-easiest-no-setup)
+1. [Or: run from source code (for developers)](#1-or-run-from-source-code-for-developers)
 2. [Fill in the app](#2-fill-in-the-app)
 3. [Test it before registration opens](#3-test-it-before-registration-opens)
 4. [On registration day](#4-on-registration-day)
@@ -21,9 +22,47 @@ and registers your chosen courses **automatically** the moment a seat opens.
 
 ---
 
-## 1. Install and run on your computer (local)
+## 0. Download and install (easiest, no setup)
 
-You only do this once.
+No terminal, no Node.js. Just download and open.
+
+1. Go to the **Releases** page: https://github.com/vineeta07/CourseRegDTU/releases/latest
+2. Under **Assets**, download the file for your computer:
+
+| Your computer | Download |
+|---|---|
+| **Windows** | `CourseRegistrar-...-win-x64.exe` (installer) **or** `CourseRegistrar-...-windows-portable.exe` (no install, just double-click) |
+| **Mac with Apple chip** (M1/M2/M3/M4) | `CourseRegistrar-...-mac-arm64.dmg` |
+| **Mac with Intel chip** | `CourseRegistrar-...-mac-x64.dmg` |
+| **Linux** | `.AppImage` (any Linux) or `.deb` (Ubuntu/Debian) |
+
+Not sure which Mac you have? Apple menu  → **About This Mac** → "Chip: Apple M…" = Apple chip, "Processor: Intel" = Intel.
+
+3. **Open it the first time.** The app isn't from an app store, so your computer shows a warning once:
+   - **Windows:** "Windows protected your PC" → click **More info** → **Run anyway**.
+   - **Mac:** open the `.dmg`, drag **CourseRegistrar** into **Applications**. Open it: if it says it
+     "can't be opened" or "is damaged", go to **System Settings → Privacy & Security**, scroll down and
+     click **Open Anyway**. If that button isn't there, open **Terminal** and run:
+     ```bash
+     xattr -cr /Applications/CourseRegistrar.app
+     ```
+     then open the app again.
+   - **Linux (AppImage):** right-click the file → Properties → Permissions → tick **Allow executing as program**,
+     then double-click it.
+
+4. Continue with [Fill in the app](#2-fill-in-the-app).
+
+**Updating:** download the newest file from the Releases page again and install it over the old one.
+
+> The app runs on **your own computer** on purpose: it uses *your* login session, and each person's
+> requests come from their own device. A shared website running it for everyone would send all
+> students' requests from one place, which is exactly what gets blocked.
+
+---
+
+## 1. Or: run from source code (for developers)
+
+Skip this if you used the download above. You only do this once.
 
 ### a) Install the tools
 - **Node.js** (version 18 or newer): download the **LTS** version from https://nodejs.org and install it
@@ -231,7 +270,10 @@ on the website if needed.
 
 ## 8. Updating the app
 
-When there are changes, open a terminal in the `CourseRegDTU` folder and run:
+**If you downloaded the installer:** download the newest file from
+https://github.com/vineeta07/CourseRegDTU/releases/latest and install it again.
+
+**If you run from source code:** when there are changes, open a terminal in the `CourseRegDTU` folder and run:
 
 ```bash
 git pull origin vineeta
@@ -241,3 +283,20 @@ npm install
 ```
 
 Then `npm start` as usual.
+
+---
+
+## For the maintainer: publishing a new download
+
+The installers are built automatically by GitHub (`.github/workflows/release.yml`).
+To publish a new version:
+
+1. Change `"version"` in `package.json` (e.g. `1.0.1`) and commit.
+2. Create and push a tag with the same number:
+   ```bash
+   git tag v1.0.1
+   ```
+   ```bash
+   git push origin v1.0.1
+   ```
+3. Wait ~10 minutes. Check progress in the **Actions** tab. The files then appear on the **Releases** page.
