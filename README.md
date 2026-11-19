@@ -10,8 +10,12 @@ To start: `npm install` then `npm start`
   Use "Forget Saved Session" to clear it.
 - Re-login on expiry is capped at 3 attempts with long back-off (15s / 45s / 2min).
 
-## Request behaviour
-- Registration page is checked every 2s.
-- A register request is only sent when a tracked course shows free seats; at most 3 attempts per course,
-  then the course is dropped (usually a slot clash / not eligible).
-- If the portal shows "Device Access Suspended", the app stops immediately and shows the reference code.
+## Safety limits (to avoid getting your device blocked)
+- **Watch only** mode is ON by default: test it first, it sends no register requests.
+- Page checked every 3s; never more than 25 requests/min, minimum 1.5s between any two requests.
+- Register requests submit the course's form exactly as the page defines it (same fields/tokens),
+  only when seats are free and the button is enabled.
+- Max 2 tries per course; a refused course is not retried until its seat count changes. Max 10 per run.
+- Stops immediately on HTTP 403/429, any warning like "too many requests"/"blocked"/"suspended",
+  or the Device Access Suspended page.
+- Only one copy of the app can run at a time. Don't also keep refreshing the portal in your browser.
