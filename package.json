@@ -13,7 +13,8 @@
     "dist": "electron-builder",
     "dist:win": "electron-builder --win",
     "dist:mac": "electron-builder --mac",
-    "dist:linux": "electron-builder --linux"
+    "dist:linux": "electron-builder --linux",
+    "selftest": "node selftest/run.js"
   },
   "build": {
     "appId": "com.saksham.coureregdtu",
@@ -26,7 +27,8 @@
       "!dist/**",
       "!.github/**",
       "!*.md",
-      "!mermaid_diagram_*.png"
+      "!mermaid_diagram_*.png",
+      "!selftest/**"
     ],
     "artifactName": "CourseRegistrar-${version}-${os}-${arch}.${ext}",
     "win": {

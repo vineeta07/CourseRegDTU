@@ -13,7 +13,7 @@ and registers your chosen courses **automatically** the moment a seat opens.
 0. [Download and install (easiest, no setup)](#0-download-and-install-easiest-no-setup)
 1. [Or: run from source code (for developers)](#1-or-run-from-source-code-for-developers)
 2. [Fill in the app](#2-fill-in-the-app)
-3. [Test it before registration opens](#3-test-it-before-registration-opens)
+3. [Check that all the code works (self-test)](#2-check-that-all-the-code-works-self-test) and [test it before registration opens](#3-test-it-before-registration-opens)
 4. [On registration day](#4-on-registration-day)
 5. [If a captcha appears](#5-if-a-captcha-appears)
 6. [Safety limits](#safety-limits)
@@ -177,6 +177,26 @@ Or click the **`</>`** button and paste a list:
 ### d) Checking speed
 - **Normal**: checks every 3 seconds (safer). Use most of the time.
 - **Fast**: checks every 2 seconds. Use only for the first few minutes of the registration rush.
+
+---
+
+## 2½. Check that all the code works (self-test)
+
+*(Only if you run from source code. Takes about 1½ minutes.)*
+
+In the `CourseRegDTU` folder run:
+
+```bash
+npm run selftest
+```
+
+This does **not** contact the real portal. It starts a **fake portal on your own computer** and runs
+the real app code against it in 14 situations: registering by itself, list order, Watch-only,
+refused courses, all captcha types, registration closed, wrong course code, portal warnings,
+429 errors, the Device Suspended page, an expired cookie and the speed limit.
+
+You should see `PASS` on every line and **`14/14 checks passed.`** at the end.
+If any line says `FAIL`, copy the whole output and send it to the maintainer.
 
 ---
 
