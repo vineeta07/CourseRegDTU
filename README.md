@@ -277,7 +277,7 @@ These are there so your device does not get blocked ("multiple altering requests
 | "Device Access Suspended" page | Stops at once. **Locked for 24 h.** |
 | Any other error from the portal (4xx), or the course list disappears | Stops at once. |
 | A register request fails | Stops; does not retry. |
-| Server/network error (5xx, timeout) | One short retry, then stops after 3 in a row. |
+| Server/network error (5xx, timeout) | Waits 5 s and tries again; stops after 3 failures in a row. |
 | Session expires and no password/Auto Login | Stops with a clear message (no login attempts). |
 
 **Lock:** after the portal pushes back, pressing Start shows *"Locked until …"* and does nothing until
