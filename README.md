@@ -7,6 +7,11 @@ and registers your chosen courses **automatically** the moment a seat opens.
 - Captcha → it beeps, shows you the captcha, you type it, it submits instantly.
 - Built-in safety limits so your device does not get blocked (see [Safety limits](#safety-limits)).
 
+> ⚠️ **November 2026: ExamSetu was redesigned.** Registration now happens on the new page
+> `https://exam-setu.dtu.ac.in/register/` (Add courses → Review and submit), behind a bot check.
+> **This app only works with the old page and does not support the new one.** If it says
+> *"The portal now uses its new registration page"*, register by hand in your browser.
+
 ---
 
 ## Contents

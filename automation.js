@@ -251,7 +251,13 @@ async function fetchRegistrationPage(session) {
   if (isLoginRedirect(response)) throw new SessionExpiredError('Session expired.');
   if (response.statusCode >= 300 && response.statusCode < 400) {
     // Logged in, but the portal sends us elsewhere (e.g. home page): registration not open.
-    throw new NotOpenError(`Registration page redirects to ${response.headers.location || 'another page'}`);
+    const loc = response.headers.location || '';
+    // The portal was redesigned (new page at /register/). This app only supports the old page.
+    if (/\/register\/?(\?|#|$)/i.test(loc) && !/courseRegist/i.test(loc)) {
+      throw new Error('The portal now uses its new registration page (/register/), which this app does not support. ' +
+        'The app has stopped. Please register by hand in your browser.');
+    }
+    throw new NotOpenError(`Registration page redirects to ${loc || 'another page'}`);
   }
   if (response.statusCode >= 400 && response.statusCode < 500) {
     throw new Error(`Registration page returned HTTP ${response.statusCode}. Stopping to be safe.`);
