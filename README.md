@@ -32,6 +32,12 @@ the instant a full course frees up. It never clicks Add/Submit — **you** do th
    course choices and you can't change them afterwards. The app never clicks Add and never submits for you.
 
 **Behaviour**
+- **Runs in the background:** keeps watching while the app and portal window are minimised. It
+  **refreshes the portal every ~30 seconds** (the portal doesn't update seats on its own), so it
+  catches a dropped seat hands-free and fires the desktop notification + alarm.
+- **Keep the laptop awake:** if you close the lid and the machine sleeps, nothing runs until it wakes.
+  Plug in and disable sleep for the window you want it watching.
+- **Keep the portal window open** (minimised is fine). If you close it, monitoring stops.
 - Independent state per course; a course is tracked separately from the others.
 - No duplicate alerts: it fires once when a seat opens, and again only if the course fills and re-opens.
 - Tolerates page reloads / brief disconnects; stops itself if the page is unreadable several times in a row

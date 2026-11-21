@@ -14,6 +14,8 @@ let monitor = null;        // monitor.js state machine
 let monitorFails = 0;
 const MONITOR_INTERVAL_MS = 4000;
 const MONITOR_MAX_FAILS = 5;
+const PORTAL_REFRESH_MS = 30000; // reload the portal this often so seat numbers are current
+let lastReloadAt = 0;
 
 // Bring the app to the front and get attention (a seat just opened).
 function grabAttention() {
@@ -76,6 +78,7 @@ ipcMain.handle('start-monitor', async (event, data) => {
 
   monitor = createMonitor(codes);
   monitorFails = 0;
+  lastReloadAt = Date.now();
   const reader = buildReaderScript(codes);
 
   // Open a real browser window and let the USER log in and pass any security
@@ -101,6 +104,19 @@ ipcMain.handle('start-monitor', async (event, data) => {
 
   monitorTimer = setInterval(async () => {
     if (!monitorWin || monitorWin.isDestroyed()) return;
+
+    // The portal does NOT update seat numbers on its own, so periodically reload it to
+    // pull fresh data. Skip the reload while a tracked course is already open, so we never
+    // wipe the highlighted Add button out from under you. A ~30s reload is human-paced.
+    const stNow = monitor ? monitor.getState() : {};
+    const anyOpen = Object.keys(stNow).some(c => stNow[c].status === 'available');
+    if (!anyOpen && Date.now() - lastReloadAt >= PORTAL_REFRESH_MS) {
+      lastReloadAt = Date.now();
+      try { monitorWin.webContents.reload(); } catch (_) {}
+      monitorStatus('info', 'Refreshing the portal for current seats…');
+      return; // let the page load; the next tick reads fresh data
+    }
+
     let readings;
     try {
       readings = await monitorWin.webContents.executeJavaScript(reader, true);
