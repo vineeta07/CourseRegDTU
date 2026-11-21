@@ -1,6 +1,6 @@
 {
   "name": "dtu-seat-monitor",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "DTU Seat Monitor (read-only)",
   "main": "main.js",
   "author": {
