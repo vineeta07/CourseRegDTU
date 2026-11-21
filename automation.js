@@ -123,14 +123,32 @@ const WARNING_RE = /suspend|blocked due|too many|multiple (altering|attempts|req
 
 // Bot-protection / "security verification" pages. The portal is screening out automated
 // tools, so the app must stop instead of retrying.
-const BOT_CHECK_RE = /Performing security verification|verifies you are not a bot|protect against malicious bots|Checking your browser|Just a moment\.\.\.|challenge-platform|cf-challenge|cf-turnstile|ddos protection/i;
+// Only the VISIBLE page counts: the protection service also adds a background script
+// (e.g. /cdn-cgi/challenge-platform/...) to normal pages, which is not a bot check.
+const BOT_CHECK_TEXT_RE = /Performing security verification|verifies you are not a bot|protect against malicious bots|Checking (if the site connection is secure|your browser)|Verify you are human/i;
+
+function detectBotCheck(response, raw) {
+  const mitigated = response.headers['cf-mitigated'];
+  if (mitigated) return `server header "cf-mitigated: ${mitigated}"`;
+  if (!raw || raw.length > 500000) return null;
+  const $ = cheerio.load(raw);
+  $('script, style, noscript, template').remove();
+  const title = $('title').text().trim();
+  if (/^Just a moment\.*$/i.test(title)) return `page title "${title}"`;
+  const visible = $('body').text().replace(/\s+/g, ' ');
+  const m = visible.match(BOT_CHECK_TEXT_RE);
+  if (m) return `page text "${m[0]}"`;
+  if ($('#challenge-form, #challenge-running, #cf-challenge-running, #challenge-stage').length) return 'challenge form on the page';
+  return null;
+}
 
 function checkPushback(response) {
   const raw = typeof response.body === 'string' ? response.body : '';
-  if (BOT_CHECK_RE.test(raw) || response.headers['cf-mitigated']) {
+  const found = detectBotCheck(response, raw);
+  if (found) {
     throw new SuspendedError(
-      'The portal is showing a "security verification" (bot check) page. The app has stopped and will not ' +
-      'continue, so your device is not flagged. Register by hand in your normal browser instead.'
+      `The portal is showing a "security verification" (bot check) page (detected: ${found}, HTTP ${response.statusCode}). ` +
+      'The app has stopped and will not continue, so your device is not flagged. Register by hand in your normal browser instead.'
     );
   }
   if (response.statusCode === 403 || response.statusCode === 429) {

@@ -44,7 +44,9 @@ function courseRow(code, key, slot) {
 function registrationPage() {
   const alert = sc.alert ? `<div class="alert alert-danger" role="alert">${sc.alert}</div>` : '';
   sc.alert = '';
-  return `<html><body>${alert}<div class="elective-subjects table-responsive"><table class="table-hover table-bordered"><tbody>` +
+  const injected = sc.opts.injectScript
+    ? '<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script><script>window.__CF$cv$params={r:"x"}</script>' : '';
+  return `<html><head>${injected}</head><body>${alert}<div class="elective-subjects table-responsive"><table class="table-hover table-bordered"><tbody>` +
     `<tr class="setHeader"><td colspan="3">E1</td></tr>${courseRow('CS301', 'A', 'E1')}` +
     `<tr class="setHeader"><td colspan="3">E2</td></tr>${courseRow('HU317', 'B', 'E2')}` +
     `</tbody></table></div></body></html>`;
@@ -239,6 +241,12 @@ server.listen(0, '127.0.0.1', async () => {
     { botCheckAt: 2, seatsAt: 99 }, {}, r => {
       expect(r.errors.some(e => /security verification/i.test(e)), 'did not stop on the bot-check page');
       expect(r.log.length === 2, `kept sending requests after the bot check (${r.log.length} requests)`);
+    }));
+
+  results.push(await run('Normal page with the protection service\'s hidden script: keeps working (no false alarm)',
+    { injectScript: true }, {}, r => {
+      expect(r.errors.length === 0, `stopped by mistake: ${r.errors[0]}`);
+      expect(r.registered.includes('CS301'), 'course was not registered');
     }));
 
   results.push(await run('Server errors (HTTP 500) keep happening: one retry, then stops',
