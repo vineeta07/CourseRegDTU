@@ -171,7 +171,7 @@ function buildHighlightScript(code, seats, name) {
     'if(btn){try{btn.focus({preventScroll:true});}catch(e){}}}' +
     'var old=document.getElementById("seatwatch-banner");if(old)old.remove();' +
     'var b=document.createElement("div");b.id="seatwatch-banner";' +
-    'b.textContent="SEAT OPEN: "+code+(info.name?(" ("+info.name+")"):"")+" - "+info.seats+" left. Click the highlighted Add button to register.";' +
+    'b.textContent="SEAT OPEN: "+code+(info.name?(" ("+info.name+")"):"")+" - "+info.seats+" left. Press Enter / click the highlighted Add button to add it. Do NOT click the final Submit button - that locks your choices.";' +
     'b.style.cssText="position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#e11d48;color:#fff;font:bold 18px system-ui,Arial,sans-serif;padding:14px 20px;text-align:center;box-shadow:0 2px 14px rgba(0,0,0,.45)";' +
     'document.body.appendChild(b);' +
     'setTimeout(function(){var x=document.getElementById("seatwatch-banner");if(x)x.remove();},30000);' +

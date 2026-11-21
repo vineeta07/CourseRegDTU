@@ -591,7 +591,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loudAlarm();
     const li = document.createElement('li');
     li.className = 'log-good';
-    li.textContent = `🔔 SEAT OPEN: ${a.code}${a.name ? ' — ' + a.name : ''} — ${a.seats} left! Go click Add in the portal window.`;
+    li.textContent = `🔔 SEAT OPEN: ${a.code}${a.name ? ' — ' + a.name : ''} — ${a.seats} left! Press Enter / click Add. Do NOT click Submit.`;
     monitorStateList.prepend(li);
   });
 });

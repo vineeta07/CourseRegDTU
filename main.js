@@ -229,7 +229,7 @@ ipcMain.handle('start-monitor', async (event, data) => {
       try {
         notifier.notify({
           title: `SEAT OPEN: ${a.code}`,
-          message: `${a.name || a.code} - ${a.seats} seat(s) left. Open the portal window and click Add.`,
+          message: `${a.name || a.code} - ${a.seats} seat(s) left. Press Enter / click Add in the portal window. Do NOT click Submit.`,
           sound: true,
           wait: false,
         });

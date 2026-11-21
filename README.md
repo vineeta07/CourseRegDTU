@@ -8,7 +8,7 @@ and registers your chosen courses **automatically** the moment a seat opens.
 - Built-in safety limits so your device does not get blocked (see [Safety limits](#safety-limits)).
 
 > ⚠️ **November 2026: ExamSetu was redesigned.** Registration now happens on the new page
-> `https://exam-setu.dtu.ac.in/register/` (Add courses → Review and submit), behind a bot check.
+> `https://exam-setu.dtu.ac.in/register/` (click Add per course; a separate final Submit locks everything), behind a bot check.
 > **This app only works with the old page and does not support the new one.** If it says
 > *"The portal now uses its new registration page"*, register by hand in your browser.
 
@@ -290,8 +290,9 @@ the instant a full course frees up. It never clicks Add/Submit — **you** do th
    - plays a **loud alarm** and shows a **desktop notification** (course code + seats),
    - **brings that portal window to the front**,
    - **scrolls to the course and highlights its Add button** with a red/yellow outline and a banner.
-5. The **Add** button is right there, highlighted — click it, then **Review and submit**. The app never
-   clicks Add or submits for you; the final confirmation is always yours.
+5. The **Add** button is right there, highlighted and focused — **press Enter (or click it)** to add the course.
+   Clicking **Add** adds it immediately. **Do NOT click the final Submit button** — that locks all your
+   course choices and you can't change them afterwards. The app never clicks Add and never submits for you.
 
 **Behaviour**
 - Independent state per course; a course is tracked separately from the others.
