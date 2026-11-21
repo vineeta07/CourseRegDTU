@@ -78,32 +78,9 @@ document.addEventListener('DOMContentLoaded', () => {
     monitorStatus.className = `status-${kind}`;
   }
 
-  // A loud, repeating two-tone siren for ~5 seconds when a seat opens.
-  let alarmCtx = null;
-  function loudAlarm() {
-    try {
-      alarmCtx = alarmCtx || new (window.AudioContext || window.webkitAudioContext)();
-      const ctx = alarmCtx;
-      if (ctx.state === 'suspended') ctx.resume();
-      for (let i = 0; i < 10; i++) {
-        const t = ctx.currentTime + i * 0.5;
-        const o = ctx.createOscillator(); const g = ctx.createGain();
-        o.type = 'square';
-        o.frequency.setValueAtTime(i % 2 ? 1046 : 784, t);
-        g.gain.setValueAtTime(0.0001, t);
-        g.gain.exponentialRampToValueAtTime(0.5, t + 0.05);
-        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
-        o.connect(g); g.connect(ctx.destination);
-        o.start(t); o.stop(t + 0.5);
-      }
-    } catch (_) {}
-  }
-
   monitorStartBtn.addEventListener('click', async () => {
     const codes = getMonitorCodes();
     if (!codes.length) { setMonitorStatus('Add at least one course code first.', 'warn'); return; }
-    // Unlock audio so the alarm can play later (browsers need a user gesture first).
-    try { alarmCtx = alarmCtx || new (window.AudioContext || window.webkitAudioContext)(); if (alarmCtx.state === 'suspended') alarmCtx.resume(); } catch (_) {}
     const r = await window.electronAPI.startMonitor({ codes });
     if (r && r.success) { setMonitorUI(true); setMonitorStatus('Starting… a portal window is opening. Log in there and keep it open.'); }
     else { setMonitorStatus((r && r.error) || 'Could not start monitoring.', 'error'); }
@@ -140,11 +117,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   window.electronAPI.onMonitorAlert((event, a) => {
-    loudAlarm();
     const li = document.createElement('li');
     li.className = 'log-good';
     const slot = slotLabelFor(a.code) || a.slot || '';
-    li.textContent = `🔔 SEAT OPEN: ${a.code}${slot ? ` [${slot}]` : ''}${a.name ? ' — ' + a.name : ''} — ${a.seats} left! Attempting to add. Do NOT click Submit.`;
+    li.textContent = `SEAT AVAILABLE: ${a.code}${slot ? ` [${slot}]` : ''}${a.name ? ' — ' + a.name : ''} — ${a.seats} left. Add attempt sent. Do NOT click Submit.`;
     monitorStateList.prepend(li);
   });
 });

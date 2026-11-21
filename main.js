@@ -138,7 +138,7 @@ ipcMain.handle('start-monitor', async (event, data) => {
         notifier.notify({
           title: `SEAT OPEN: ${a.code}`,
           message: `${a.name || a.code} - ${a.seats} seat(s) left. Attempting to add; do NOT click Submit.`,
-          sound: true,
+          sound: false,
           wait: false,
         });
       } catch (_) {}

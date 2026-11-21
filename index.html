@@ -16,12 +16,25 @@
     <div class="card" id="monitor-card">
       <h2>Seat Monitor — new portal (/register/)</h2>
       <p class="hint">
-        Read-only watcher for the redesigned portal. It opens a browser window: <b>log in there
-        yourself</b> (solve any verification), go to Course Registration, and <b>keep that window open</b>.
-        It watches the courses below and, when one changes from <b>Full → seats available</b>, it gives a
-        <b>loud desktop alert</b>, selects that course, and clicks only its <b>+ Add</b> button.
-        It <b>never clicks the final Submit button</b>, so your choices are not locked.</p>
-      <p class="hint">It keeps watching while minimised or in the background and refreshes the portal every ~30s, so it catches drops hands-free and alerts your laptop. Keep the <b>portal window open</b> (minimised is fine) and your <b>laptop awake</b> — if the lid closes and it sleeps, nothing runs until it wakes.
+        <b>Course-seat watcher</b> for the redesigned DTU registration portal.
+        Open the portal, <b>log in yourself</b>, solve any verification, navigate to
+        <b>Course Registration</b>, and keep the portal window open.
+      </p>
+      <p class="hint">
+        Add the courses you want to watch and start monitoring. The app checks
+        these courses every few seconds. If a <b>Full</b> course shows at least
+        <b>1 seat</b>, it automatically clicks that course's <b>+ Add</b> button
+        and sends a normal desktop notification to confirm that the course was selected.
+      </p>
+      <p class="hint">
+        Monitoring supports one available course per slot. It skips courses already
+        marked <b>Added</b> or <b>Drop</b>. It <b>never clicks the final Submit button</b>,
+        so the final submission remains under your control.
+      </p>
+      <p class="hint">
+        Keep the <b>portal window open</b> and the laptop awake. Minimising or
+        switching windows is fine. If the laptop sleeps or the portal page changes,
+        monitoring will not run until it is active again.
       </p>
       <h3>Courses to watch</h3>
       <div id="monitor-course-list">
