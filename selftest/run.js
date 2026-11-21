@@ -70,6 +70,7 @@ const server = http.createServer((req, res) => {
       sc.gets++;
       if (o.sessionExpired) { res.writeHead(302, { location: '/student/login' }); return res.end(); }
       if (o.closedFor && sc.gets <= o.closedFor) return res.end('<h2>Course registration is closed</h2>');
+      if (o.botCheckAt && sc.gets >= o.botCheckAt) { res.writeHead(403); return res.end('<title>Just a moment...</title><h1>exam-setu.dtu.ac.in</h1><p>Performing security verification</p><p>This website uses a security service to protect against malicious bots.</p>'); }
       if (o.suspendAt && sc.gets >= o.suspendAt) return res.end('<h1>DEVICE ACCESS SUSPENDED</h1> Unique Reference Identifier <b>PHMCWSZX</b>');
       if (o.warnAt && sc.gets >= o.warnAt) sc.alert = 'Too many requests, try again later';
       if (o.http429At && sc.gets >= o.http429At) { res.writeHead(429); return res.end('slow down'); }
@@ -219,6 +220,12 @@ server.listen(0, '127.0.0.1', async () => {
   results.push(await run('"Device Access Suspended" page: stops and shows the reference code',
     { suspendAt: 2, seatsAt: 99 }, {}, r => {
       expect(r.errors.some(e => /suspended/i.test(e) && e.includes('PHMCWSZX')), 'did not stop with the reference code');
+    }));
+
+  results.push(await run('"Performing security verification" (bot check) page: stops immediately, no retries',
+    { botCheckAt: 2, seatsAt: 99 }, {}, r => {
+      expect(r.errors.some(e => /security verification/i.test(e)), 'did not stop on the bot-check page');
+      expect(r.log.length === 2, `kept sending requests after the bot check (${r.log.length} requests)`);
     }));
 
   results.push(await run('Expired cookie (no password given): stops with a clear message, no login spam',

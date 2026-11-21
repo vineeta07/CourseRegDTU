@@ -191,11 +191,11 @@ npm run selftest
 ```
 
 This does **not** contact the real portal. It starts a **fake portal on your own computer** and runs
-the real app code against it in 14 situations: registering by itself, list order, Watch-only,
+the real app code against it in 15 situations: registering by itself, list order, Watch-only,
 refused courses, all captcha types, registration closed, wrong course code, portal warnings,
 429 errors, the Device Suspended page, an expired cookie and the speed limit.
 
-You should see `PASS` on every line and **`14/14 checks passed.`** at the end.
+You should see `PASS` on every line and **`15/15 checks passed.`** at the end.
 If any line says `FAIL`, copy the whole output and send it to the maintainer.
 
 ---
@@ -283,6 +283,7 @@ on the website if needed.
 | `Invalid Roll Number or Password` | Check your credentials. |
 | `Server refused 2 times (clash/ineligible?)` | The portal won't let you take that course (slot clash, not eligible, credit limit). Check on the website. |
 | `Portal warning: ...` / `HTTP 403 / 429` | The portal is pushing back. Wait a while before trying again. |
+| `security verification (bot check)` | The portal now screens out bots. The app stops on purpose and won't continue. **Register by hand in your normal browser.** Don't keep restarting the app. |
 | `Device Access Suspended` | Your device was blocked. Visit the Examination Department with your ID card and the reference code shown. |
 | `Reached the safety limit` | Something kept failing. Check the portal by hand. |
 | Captcha window opens every time | The captcha page looks different from what the app expects. Save that page (Ctrl+S) and share it so the app can be updated. |

@@ -118,7 +118,18 @@ async function throttle(minGap = MIN_GAP_MS) {
 // Anything that looks like the server pushing back stops the run.
 const WARNING_RE = /suspend|blocked due|too many|multiple (altering|attempts|requests)|unusual activity|suspicious|rate limit|try again later/i;
 
+// Bot-protection / "security verification" pages. The portal is screening out automated
+// tools, so the app must stop instead of retrying.
+const BOT_CHECK_RE = /Performing security verification|verifies you are not a bot|protect against malicious bots|Checking your browser|Just a moment\.\.\.|challenge-platform|cf-challenge|cf-turnstile|ddos protection/i;
+
 function checkPushback(response) {
+  const raw = typeof response.body === 'string' ? response.body : '';
+  if (BOT_CHECK_RE.test(raw) || response.headers['cf-mitigated']) {
+    throw new SuspendedError(
+      'The portal is showing a "security verification" (bot check) page. The app has stopped and will not ' +
+      'continue, so your device is not flagged. Register by hand in your normal browser instead.'
+    );
+  }
   if (response.statusCode === 403 || response.statusCode === 429) {
     throw new SuspendedError(`Portal returned HTTP ${response.statusCode} (refused / too many requests). Stopping to protect your account. Wait a while before trying again.`);
   }
