@@ -33,12 +33,25 @@ function resetPortal(opts) {
 }
 
 function courseRow(code, key, slot) {
+  const o = sc.opts;
   const reg = sc.registered[key];
-  const inlineCaptcha = sc.opts.captcha === 'inline'
+  const closed = o.closedButtonsFor && sc.gets <= o.closedButtonsFor;
+  const inlineCaptcha = o.captcha === 'inline'
     ? '<img src="/captcha.png"><input name="captcha" type="text">' : '';
-  return `<tr ${reg ? 'bgcolor="#0ff288"' : ''}><td>1</td><td>${code}</td><td>Course ${code}</td><td>${slot}</td>` +
-    `<td>${sc.seats[key]}</td><td><form method="POST" action="/student/courseRegister/${SH}/${HASH[key]}">` +
-    `<input type="hidden" name="_csrf" value="tok">${inlineCaptcha}<button>Register</button></form></td></tr>`;
+  let action;
+  if (reg && o.registeredStyle === 'drop') {
+    action = `<form method="POST" action="/student/courseDrop/${SH}/${HASH[key]}x"><button>Drop</button></form>`;
+  } else if (closed) {
+    action = '<b>Registration Closed</b>';
+  } else if (o.jsButton) {
+    action = `<button class="btn" onclick="registerCourse('${HASH[key]}')">Register</button>`;
+  } else {
+    action = `<form method="POST" action="/student/courseRegister/${SH}/${HASH[key]}">` +
+      `<input type="hidden" name="_csrf" value="tok">${inlineCaptcha}<button>Register</button></form>`;
+  }
+  const colour = reg && o.registeredStyle !== 'drop' ? 'bgcolor="#0ff288"' : '';
+  return `<tr ${colour}><td>Course ${code}</td><td>${code}</td><td>4</td><td>${slot}</td>` +
+    `<td>${sc.seats[key]}</td><td>${action}</td></tr>`;
 }
 
 function registrationPage() {
@@ -47,6 +60,8 @@ function registrationPage() {
   const injected = sc.opts.injectScript
     ? '<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script><script>window.__CF$cv$params={r:"x"}</script>' : '';
   return `<html><head>${injected}</head><body>${alert}<div class="elective-subjects table-responsive"><table class="table-hover table-bordered"><tbody>` +
+    `<tr><td>BTECH (Sem 6)</td><td>BTECH (Sem 6)</td><td></td><td></td><td></td><td></td></tr>` +
+    `<tr><td>Registered Course</td><td>Registered Course (Detained Course)</td><td></td><td></td><td></td><td></td></tr>` +
     `<tr class="setHeader"><td colspan="3">E1</td></tr>${courseRow('CS301', 'A', 'E1')}` +
     `<tr class="setHeader"><td colspan="3">E2</td></tr>${courseRow('HU317', 'B', 'E2')}` +
     `</tbody></table></div></body></html>`;
@@ -213,6 +228,31 @@ server.listen(0, '127.0.0.1', async () => {
     { closedFor: 3, seatsAt: 5 }, {}, r => {
       expect(r.status.some(s => /no course list|not open yet/i.test(s)), 'did not say it was waiting');
       expect(r.registered.includes('CS301'), 'did not register after registration opened');
+    }));
+
+  results.push(await run('Real portal layout: "Registration Closed" rows -> waits, then registers when the button appears',
+    { closedButtonsFor: 3, seatsAt: 4 }, {}, r => {
+      expect(r.status.some(s => /Registration Closed/.test(s) && /Waiting/.test(s)), 'did not say it was waiting for the button');
+      expect(!r.status.some(s => /not found/.test(s)), 'wrongly said "not found"');
+      expect(r.registered.includes('CS301'), 'did not register after the button appeared');
+    }));
+
+  results.push(await run('Registered course shows a "Drop" button: detected as registered, no extra clicks',
+    { registeredStyle: 'drop' }, {}, r => {
+      expect(r.registered.includes('CS301'), 'did not notice the course was registered');
+      expect(r.posts === 1, `sent ${r.posts} register requests`);
+    }));
+
+  results.push(await run('Register button that only works inside the page: opens the portal window for you',
+    { jsButton: true }, {}, r => {
+      expect(r.manualWindows === 1, `opened ${r.manualWindows} portal window(s)`);
+      expect(r.posts === 0, 'tried to submit a button it cannot submit');
+    }));
+
+  results.push(await run('Heading rows (e.g. "BTECH (Sem 6)") are not listed as courses',
+    {}, { courses: ['CS999:E1', 'CS301:E1'] }, r => {
+      const warn = r.status.find(s => /not found/.test(s)) || '';
+      expect(!/BTECH|Registered Course/.test(warn), `listed heading rows as courses: ${warn}`);
     }));
 
   results.push(await run('Wrong course code: warns and lists the real codes',

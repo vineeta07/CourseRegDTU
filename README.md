@@ -197,11 +197,11 @@ npm run selftest
 ```
 
 This does **not** contact the real portal. It starts a **fake portal on your own computer** and runs
-the real app code against it in 21 situations: registering by itself, list order, Watch-only,
+the real app code against it in 25 situations: registering by itself, list order, Watch-only,
 refused courses, all captcha types, registration closed, wrong course code, portal warnings,
 429 errors, the Device Suspended page, an expired cookie and the speed limit.
 
-You should see `PASS` on every line and **`21/21 checks passed.`** at the end.
+You should see `PASS` on every line and **`25/25 checks passed.`** at the end.
 If any line says `FAIL`, copy the whole output and send it to the maintainer.
 
 ---

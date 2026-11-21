@@ -272,6 +272,12 @@ function courseHashFromAction(action, studentHash) {
 }
 
 // Parses the page into rows: { courseCode, courseSlot, seats, courseHash, state }
+// A real course code looks like HU326, CH314m, MBASC220 (letters + digits), not "BTECH (Sem 6)".
+const COURSE_CODE_RE = /^[A-Za-z]{2,}\d{2,}[A-Za-z]{0,2}$/;
+
+// Parses the page into rows: { courseCode, courseSlot, seats, courseHash, state, ... }
+// state: 'open' (Register button), 'closed' ("Registration Closed", no button),
+//        'registered', 'blocked', or 'jsOnly' (a button that only works via the page's JavaScript).
 function parseCourses(html, studentHash) {
   const $ = cheerio.load(html);
   const rows = [];
@@ -287,29 +293,47 @@ function parseCourses(html, studentHash) {
     if (cells.length < 6) return;
 
     const courseCode = $(cells[1]).text().trim();
+    if (!COURSE_CODE_RE.test(courseCode)) return; // heading rows like "BTECH (Sem 6)"
     const courseSlot = $(cells[3]).text().trim() || currentSlot;
     const seats = parseInt($(cells[4]).text().trim(), 10) || 0;
-    const form = row.find("form[action*='/student/courseRegister/']").first();
-    const action = form.attr('action');
-    const courseHash = courseHashFromAction(action, studentHash);
-    // Collect exactly the fields the browser would send (hidden inputs, CSRF tokens, ...).
-    const fields = {};
-    form.find('input[name], select[name], textarea[name]').each((_, el) => {
-      const e = $(el);
-      const type = (e.attr('type') || '').toLowerCase();
-      if ((type === 'checkbox' || type === 'radio') && e.attr('checked') === undefined) return;
-      if (type === 'submit' || type === 'button') return;
-      fields[e.attr('name')] = e.attr('value') || '';
-    });
-    const submit = form.find('button, input[type=submit]').first();
-    if (submit.attr('name')) fields[submit.attr('name')] = submit.attr('value') || '';
-    const canSubmit = form.length > 0 &&
-      submit.attr('disabled') === undefined && form.find('fieldset[disabled]').length === 0;
-    const method = (form.attr('method') || 'GET').toUpperCase();
-    const bg = (row.attr('bgcolor') || '').toLowerCase();
-    const state = bg === '#0ff288' ? 'registered' : bg === '#d4d3d2' ? 'blocked' : 'open';
+    const actionCell = $(cells[cells.length - 1]);
+    const actionText = actionCell.text().replace(/\s+/g, ' ').trim();
 
-    if (courseCode) rows.push({ courseCode, courseSlot, seats, courseHash, state, action, method, fields, canSubmit });
+    let form = row.find("form[action*='/student/courseRegister/']").first();
+    if (!form.length) form = row.find('form').filter((_, f) => /regist/i.test($(f).attr('action') || '')).first();
+    if (!form.length) form = actionCell.find('form').first();
+    const link = form.length ? null : row.find('a[href]').filter((_, a) => /regist/i.test($(a).attr('href') || '')).first();
+
+    let action = null, method = 'GET', fields = {}, canSubmit = false;
+    if (form.length) {
+      action = form.attr('action') || '';
+      method = (form.attr('method') || 'GET').toUpperCase();
+      // Collect exactly the fields the browser would send (hidden inputs, CSRF tokens, ...).
+      form.find('input[name], select[name], textarea[name]').each((_, el) => {
+        const e = $(el);
+        const type = (e.attr('type') || '').toLowerCase();
+        if ((type === 'checkbox' || type === 'radio') && e.attr('checked') === undefined) return;
+        if (type === 'submit' || type === 'button') return;
+        fields[e.attr('name')] = e.attr('value') || '';
+      });
+      const submit = form.find('button, input[type=submit]').first();
+      if (submit.attr('name')) fields[submit.attr('name')] = submit.attr('value') || '';
+      canSubmit = submit.attr('disabled') === undefined && form.find('fieldset[disabled]').length === 0;
+    } else if (link && link.length) {
+      action = link.attr('href');
+      canSubmit = true;
+    }
+    const courseHash = courseHashFromAction(action, studentHash) || action || null;
+
+    const bg = (row.attr('bgcolor') || '').toLowerCase();
+    let state;
+    if (bg === '#0ff288' || /\bregistered\b/i.test(actionText) || /drop|deregister|unregister/i.test(action || '')) state = 'registered';
+    else if (bg === '#d4d3d2' || /\bblocked\b|not eligible/i.test(actionText)) state = 'blocked';
+    else if (action) state = 'open';
+    else if (actionCell.find('button, input[type=button], input[type=submit]').length && !/closed/i.test(actionText)) state = 'jsOnly';
+    else state = 'closed';
+
+    rows.push({ courseCode, courseSlot, seats, courseHash, state, action, method, fields, canSubmit, actionText });
   });
 
   const alert = $('div.alert.alert-danger').first().text().replace(/\s+/g, ' ').trim();
@@ -613,6 +637,15 @@ async function startAutomation(options, callbacks) {
       return { code, slot };
     });
     const tracked = new Map(); // courseHash -> info
+    const pending = [];        // wanted courses on the page but still "Registration Closed"
+    const findWanted = (rows, w) => rows.find(r => r.courseCode.toLowerCase() === w.code.toLowerCase() &&
+      (!w.slot || r.courseSlot === w.slot || (r.courseSlot || '').includes(w.slot)));
+    const trackRow = (row, w) => {
+      if (row.state === 'registered') { callbacks.onCourseRegistered({ courseCode: row.courseCode, courseSlot: w.slot }); status(`${row.courseCode} is already registered.`); return; }
+      if (row.state === 'blocked') { callbacks.onCourseBlocked({ courseCode: row.courseCode, courseSlot: w.slot }); status(`${row.courseCode} is blocked for you on the portal.`); return; }
+      const key = `${row.courseCode}|${w.slot}`;
+      tracked.set(key, { courseCode: row.courseCode, courseSlot: w.slot, seats: row.seats, posts: 0, row, lastFailedSeats: null });
+    };
     let savedManual = false;
     let waitingSince = null;
 
@@ -646,25 +679,35 @@ async function startAutomation(options, callbacks) {
         await delay(POLL_INTERVAL_MS);
         continue;
       }
-      if (waitingSince) status('Registration is OPEN - course list found!');
+      if (waitingSince && rows.some(r => r.state !== 'closed')) status('Registration is OPEN - Register buttons found!');
 
       lastHtml = html;
       const missing = [];
+      pending.length = 0;
       for (const w of wanted) {
-        const row = rows.find(r => r.courseCode === w.code && (!w.slot || r.courseSlot === w.slot || (r.courseSlot || '').includes(w.slot)));
-        if (!row || !row.courseHash) { missing.push(`${w.code} (${w.slot})`); continue; }
+        const row = findWanted(rows, w);
+        if (!row) { missing.push(`${w.code} (${w.slot})`); continue; }
+        if (row.state === 'closed') { pending.push(w); continue; }
         if (row.state === 'registered') { callbacks.onCourseRegistered({ courseCode: row.courseCode, courseSlot: w.slot }); status(`${row.courseCode} is already registered.`); continue; }
         if (row.state === 'blocked') { callbacks.onCourseBlocked({ courseCode: row.courseCode, courseSlot: w.slot }); status(`${row.courseCode} is blocked for you on the portal.`); continue; }
-        tracked.set(row.courseHash, { courseCode: row.courseCode, courseSlot: w.slot, seats: row.seats, posts: 0, row, lastFailedSeats: null });
+        trackRow(row, w);
       }
       if (missing.length) {
         status(`WARNING - not found on the page, check the code and slot: ${missing.join(', ')}. ` +
-          `Courses on the page include: ${rows.slice(0, 8).map(r => `${r.courseCode} (${r.courseSlot})`).join(', ')}${rows.length > 8 ? ', ...' : ''}`);
+          `Courses on the page include: ${rows.slice(0, 10).map(r => `${r.courseCode} (${r.courseSlot})`).join(', ')}${rows.length > 10 ? ', ...' : ''}`);
       }
+      if (tracked.size === 0 && pending.length > 0) {
+        if (!waitingSince) waitingSince = Date.now();
+        status(`Found ${pending.map(w => w.code).join(', ')} on the page, but they show "${(findWanted(rows, pending[0]) || {}).actionText || 'Registration Closed'}" ` +
+          `(no Register button yet). Waiting for registration to open... last checked ${new Date().toLocaleTimeString()}`);
+        await delay(POLL_INTERVAL_MS);
+        continue;
+      }
+      if (pending.length) status(`${pending.map(w => w.code).join(', ')}: no Register button yet - will add them as soon as it appears.`);
       break;
     }
     if (!isRunning) return;
-    if (tracked.size === 0) {
+    if (tracked.size === 0 && pending.length === 0) {
       status('None of your courses can be registered (all already registered, blocked or not found). Stopping.');
       return;
     }
@@ -675,7 +718,7 @@ async function startAutomation(options, callbacks) {
 
     const dropped = new Map(); // courses given up on after refusals (can be retried)
 
-    while (isRunning && (tracked.size > 0 || (retryRequested && dropped.size > 0))) {
+    while (isRunning && (tracked.size > 0 || pending.length > 0 || (retryRequested && dropped.size > 0))) {
       // "Try again now": give every course fresh tries, including ones given up on.
       if (retryRequested) {
         retryRequested = false;
@@ -717,19 +760,29 @@ async function startAutomation(options, callbacks) {
       }
       lastAttempted = null;
 
-      // Update state of tracked courses.
+      // Courses that were still "Registration Closed": add them once their button appears.
+      for (let k = pending.length - 1; k >= 0; k--) {
+        const row = findWanted(page.rows, pending[k]);
+        if (row && row.state !== 'closed') {
+          status(`${row.courseCode}: Register button appeared - now tracking it.`);
+          trackRow(row, pending[k]);
+          pending.splice(k, 1);
+        }
+      }
+
+      // Update state of tracked courses (matched by course code + slot, which never changes).
       let target = null;
-      for (const row of page.rows) {
-        const info = row.courseHash && tracked.get(row.courseHash);
-        if (!info) continue;
+      for (const [key, info] of Array.from(tracked)) {
+        const row = findWanted(page.rows, { code: info.courseCode, slot: info.courseSlot });
+        if (!row) continue;
         if (row.state === 'registered') {
-          tracked.delete(row.courseHash);
+          tracked.delete(key);
           callbacks.onCourseRegistered(info);
           status(`Registered: ${info.courseCode}`);
           continue;
         }
         if (row.state === 'blocked') {
-          tracked.delete(row.courseHash);
+          tracked.delete(key);
           callbacks.onCourseBlocked(info);
           status(`Blocked: ${info.courseCode} - dropped.`);
           continue;
@@ -744,16 +797,30 @@ async function startAutomation(options, callbacks) {
       // After a failed attempt, a course is only retried once its seat count changes,
       // so the same refused request is never repeated.
       for (const [hash, info] of tracked) {
-        if (info.seats > 0 && info.row.canSubmit && info.lastFailedSeats !== info.seats) { target = hash; break; }
+        const clickable = info.row.state === 'jsOnly' || (info.row.state === 'open' && info.row.canSubmit);
+        if (info.seats > 0 && clickable && info.lastFailedSeats !== info.seats) { target = hash; break; }
       }
 
       if (target && watchOnly) {
         const info = tracked.get(target);
-        const cap = findCaptcha(lastHtml, `${BASE_URL}/student/courseRegistration/${session.studentHash}`, info.row.action);
-        status(`[WATCH ONLY] ${info.courseCode} has ${info.seats} seat(s) and would be registered now` +
-          (cap ? ` (captcha detected on the page: ${cap.kind === 'text' ? 'you will be asked to type it' : 'portal window will open'}).` : '.'));
+        if (info.row.state === 'jsOnly') {
+          status(`[WATCH ONLY] ${info.courseCode} has ${info.seats} seat(s). Its button only works inside the page, so the portal window would open for you to click it.`);
+        } else {
+          const cap = findCaptcha(lastHtml, `${BASE_URL}/student/courseRegistration/${session.studentHash}`, info.row.action);
+          status(`[WATCH ONLY] ${info.courseCode} has ${info.seats} seat(s) and would be registered now` +
+            (cap ? ` (captcha detected on the page: ${cap.kind === 'text' ? 'you will be asked to type it' : 'portal window will open'}).` : '.'));
+        }
         info.lastFailedSeats = info.seats; // report once per seat change
         target = null;
+      }
+
+      // Button that only works inside the page (JavaScript): open the logged-in portal window for you.
+      if (target && tracked.get(target).row.state === 'jsOnly') {
+        const info = tracked.get(target);
+        info.lastFailedSeats = info.seats;
+        await manualSolve(session, info, `${BASE_URL}/student/courseRegistration/${session.studentHash}`,
+          { status, callbacks }, `${info.courseCode} has a free seat, but its Register button only works inside the page.`);
+        continue;
       }
 
       if (target) {
