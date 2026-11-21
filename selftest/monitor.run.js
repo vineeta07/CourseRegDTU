@@ -6,7 +6,7 @@
 //
 // Run:  npm run selftest:monitor
 
-const { parseRowText, classify, createMonitor, buildReaderScript, PORTAL_URL } = require('../monitor.js');
+const { parseRowText, classify, createMonitor, buildReaderScript, buildHighlightScript, PORTAL_URL } = require('../monitor.js');
 
 let passed = 0, failed = 0;
 function check(name, fn) {
@@ -113,6 +113,25 @@ check('Reader script targets the portal and is READ-ONLY (no click/add/submit)',
     typeof s === 'string' && s.includes('querySelectorAll') && s.includes('HU426') && !badWrites.test(s) && PORTAL_URL.includes('/register/'),
     'reader is not a safe read-only string'
   );
+});
+
+// ---- the focus/highlight script must help you click, but NEVER click itself ----
+check('Highlight script scrolls to the course and highlights, but does NOT click/submit', () => {
+  const s = buildHighlightScript('HU426', 3, 'Language And Social Media');
+  const clicks = /\.click\(|\.submit\(|courseRegister|form\.submit|\.requestSubmit\(|dispatchEvent/i;
+  return expect(
+    typeof s === 'string' &&
+    s.includes('HU426') &&
+    s.includes('scrollIntoView') &&
+    s.includes('seatwatch-banner') &&
+    !clicks.test(s),
+    'highlight script is not a safe, no-click helper'
+  );
+});
+check('Highlight script finds the "Add" button without matching "Added"', () => {
+  const s = buildHighlightScript('HU308', 1, '');
+  // It must look for an exact Add label, not merely the substring "Add".
+  return expect(/\^\\\+\?\\s\*Add\$/.test(s) || s.includes('Add$'), 'does not anchor the Add match');
 });
 
 console.log(`\n${passed}/${passed + failed} checks passed.`);

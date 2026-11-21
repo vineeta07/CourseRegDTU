@@ -286,9 +286,12 @@ the instant a full course frees up. It never clicks Add/Submit — **you** do th
 1. In the app, under **Seat Monitor**, enter the course codes to watch (defaults to HU426, HU308, HU404).
 2. Click **Start Monitoring**. A browser window opens on `/register/`.
 3. **Log in there yourself** (solve any verification), open Course Registration, and **keep that window open**.
-4. The app reads that page every few seconds (read-only). When a course changes from **Full → seats available**,
-   it plays a **loud alarm**, shows a **desktop notification**, and brings the window forward.
-5. Switch to that window and click **Add**, then **Review and submit**.
+4. The app reads that page every few seconds (read-only). When a course changes from **Full → seats available**, it:
+   - plays a **loud alarm** and shows a **desktop notification** (course code + seats),
+   - **brings that portal window to the front**,
+   - **scrolls to the course and highlights its Add button** with a red/yellow outline and a banner.
+5. The **Add** button is right there, highlighted — click it, then **Review and submit**. The app never
+   clicks Add or submits for you; the final confirmation is always yours.
 
 **Behaviour**
 - Independent state per course; a course is tracked separately from the others.
@@ -298,7 +301,7 @@ the instant a full course frees up. It never clicks Add/Submit — **you** do th
 - It only observes the page you loaded and authenticated yourself — it does not bypass the bot check,
   log in for you, or submit anything.
 
-Tested by `npm run selftest:monitor` (15 checks).
+Tested by `npm run selftest:monitor` (17 checks).
 
 ---
 

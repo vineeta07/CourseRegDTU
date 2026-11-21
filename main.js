@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { startAutomation, stopAutomation, retryNow } = require('./automation');
 const notifier = require('node-notifier');
-const { createMonitor, buildReaderScript, PORTAL_URL } = require('./monitor');
+const { createMonitor, buildReaderScript, buildHighlightScript, PORTAL_URL } = require('./monitor');
 
 let win;
 let automationRunning = false;
@@ -235,7 +235,11 @@ ipcMain.handle('start-monitor', async (event, data) => {
         });
       } catch (_) {}
       grabAttention();                       // bring app forward + flash
-      if (monitorWin && !monitorWin.isDestroyed()) { try { monitorWin.show(); monitorWin.focus(); } catch (_) {} }
+      // Bring the course into view and highlight its Add button (read-only; no click).
+      if (monitorWin && !monitorWin.isDestroyed()) {
+        try { monitorWin.show(); monitorWin.focus(); } catch (_) {}
+        try { await monitorWin.webContents.executeJavaScript(buildHighlightScript(a.code, a.seats, a.name), true); } catch (_) {}
+      }
       if (win && !win.isDestroyed()) win.webContents.send('monitor-alert', a); // loud sound in UI
     }
   }, MONITOR_INTERVAL_MS);

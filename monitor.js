@@ -144,4 +144,36 @@ function buildReaderScript(courseCodes) {
   );
 }
 
-module.exports = { PORTAL_URL, parseRowText, classify, createMonitor, buildReaderScript };
+// Builds a READ-ONLY script that, when a seat opens, brings the course into view
+// and highlights its Add button + shows a banner — WITHOUT clicking anything.
+// The user still makes the final click. It styles, scrolls and adds a banner only.
+function buildHighlightScript(code, seats, name) {
+  const info = JSON.stringify({ code: String(code), seats: Number(seats) || 0, name: String(name || '') });
+  return (
+    '(function(info){try{' +
+    'var code=info.code;' +
+    'function rowFor(code){var all=document.querySelectorAll("*");var leaf=null;' +
+    'for(var i=0;i<all.length;i++){var n=all[i];if(n.children.length===0&&n.textContent.trim()===code){leaf=n;break;}}' +
+    'if(!leaf)return null;var el=leaf;for(var d=0;d<8&&el;d++){var t=el.textContent;' +
+    'if(/\\bAdd\\b/i.test(t)||/\\bleft\\b/i.test(t))return el;el=el.parentElement;}' +
+    'return leaf.closest("div,li,tr")||leaf.parentElement;}' +
+    'var row=rowFor(code);' +
+    'if(row){row.scrollIntoView({behavior:"smooth",block:"center"});' +
+    'var cands=row.querySelectorAll("button,a,[role=button]");var btn=null;' +
+    'for(var i=0;i<cands.length;i++){var tx=cands[i].textContent.replace(/\\s+/g," ").trim();' +
+    'if(/^\\+?\\s*Add$/i.test(tx)){btn=cands[i];break;}}' +
+    'var target=btn||row;' +
+    'target.style.outline="4px solid #e11d48";target.style.outlineOffset="3px";' +
+    'target.style.boxShadow="0 0 0 6px rgba(225,29,72,.35)";' +
+    'var k=0;var iv=setInterval(function(){target.style.outlineColor=(k%2?"#e11d48":"#facc15");k++;if(k>16)clearInterval(iv);},300);}' +
+    'var old=document.getElementById("seatwatch-banner");if(old)old.remove();' +
+    'var b=document.createElement("div");b.id="seatwatch-banner";' +
+    'b.textContent="SEAT OPEN: "+code+(info.name?(" ("+info.name+")"):"")+" - "+info.seats+" left. Click the highlighted Add button to register.";' +
+    'b.style.cssText="position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#e11d48;color:#fff;font:bold 18px system-ui,Arial,sans-serif;padding:14px 20px;text-align:center;box-shadow:0 2px 14px rgba(0,0,0,.45)";' +
+    'document.body.appendChild(b);' +
+    'setTimeout(function(){var x=document.getElementById("seatwatch-banner");if(x)x.remove();},30000);' +
+    'return true;}catch(e){return false;}})(' + info + ')'
+  );
+}
+
+module.exports = { PORTAL_URL, parseRowText, classify, createMonitor, buildReaderScript, buildHighlightScript };
