@@ -479,7 +479,7 @@ document.addEventListener('DOMContentLoaded', () => {
     row.className = 'course-row';
     const codeInput = document.createElement('input');
     codeInput.type = 'text';
-    codeInput.placeholder = 'Course Code (e.g. HU426)';
+    codeInput.placeholder = 'Course Code, optionally :Slot (e.g. HU426:E4)';
     codeInput.value = code;
     const removeBtn = document.createElement('button');
     removeBtn.textContent = 'Remove';
@@ -491,9 +491,21 @@ document.addEventListener('DOMContentLoaded', () => {
     monitorCourseList.appendChild(row);
   }
 
-  function getMonitorCodes() {
+  // Entries may be "HU426" or "HU426:E4" (slot is just a display label).
+  function getMonitorEntries() {
     return [...monitorCourseList.querySelectorAll('input')]
-      .map(i => i.value.trim().toUpperCase()).filter(Boolean);
+      .map(i => {
+        const parts = i.value.trim().toUpperCase().split(':');
+        return { code: (parts[0] || '').trim(), slot: (parts[1] || '').trim() };
+      })
+      .filter(e => e.code);
+  }
+  function getMonitorCodes() {
+    return getMonitorEntries().map(e => e.code);
+  }
+  function slotLabelFor(code) {
+    const e = getMonitorEntries().find(x => x.code === code);
+    return (e && e.slot) || '';
   }
 
   function saveMonitorCodes() {
@@ -504,7 +516,7 @@ document.addEventListener('DOMContentLoaded', () => {
   (function loadMonitorCodes() {
     let codes = [];
     try { codes = JSON.parse(localStorage.getItem('monitorCodes') || 'null') || []; } catch (_) {}
-    if (!codes.length) codes = ['HU426', 'HU308', 'HU404'];
+    if (!codes.length) codes = ['HU426:E4', 'HU308:E4', 'HU404:E4'];
     codes.forEach(c => addMonitorRow(c));
   })();
 
@@ -579,7 +591,8 @@ document.addEventListener('DOMContentLoaded', () => {
       else if (s.status === 'full') { label = 'Full'; kind = 'warn'; }
       else { label = 'waiting…'; kind = 'info'; }
       li.className = `log-${kind}`;
-      li.textContent = `${code}${s.name ? ' — ' + s.name : ''}: ${label}`;
+      const slot = slotLabelFor(code) || s.slot || '';
+      li.textContent = `${code}${slot ? ` [${slot}]` : ''}${s.name ? ' — ' + s.name : ''}: ${label}`;
       monitorStateList.appendChild(li);
     });
     const checked = new Date(data.ts || Date.now()).toLocaleTimeString('en-IN');

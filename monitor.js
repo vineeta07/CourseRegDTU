@@ -33,10 +33,16 @@ function parseRowText(code, text) {
   var seats = m ? parseInt(m[1], 10) : 0;
   var added = /Added/i.test(t) || /Drop/i.test(t);
   var full = !m && !added && (/Notif/i.test(t) || /Full/i.test(t));
+  // Slot like E1/E2/E4 may be glued to the name ("ApplicationsE3"), so no leading \b.
+  var slotM = t.match(/E(\d)\b/i);
+  var slot = slotM ? ('E' + slotM[1]) : '';
   var name = t
     .replace(code, '')
     .replace(/\d+\s*left/ig, '')
     .replace(/\d+\s*credits?/ig, '')
+    .replace(/\d+\s*cr\b/ig, '')
+    .replace(/E\d\b/ig, '')
+    .replace(/[·|]/g, ' ')
     .replace(/Notifying you/ig, '')
     .replace(/Notify me/ig, '')
     .replace(/Full/ig, '')
@@ -45,7 +51,7 @@ function parseRowText(code, text) {
     .replace(/Add/ig, '')
     .replace(/\s+/g, ' ')
     .trim();
-  return { code: code, name: name, seats: seats, full: full, added: added };
+  return { code: code, name: name, seats: seats, full: full, added: added, slot: slot };
 }
 
 // Turn a reading into a status: 'available' | 'full' | 'unknown'.
@@ -60,7 +66,7 @@ function classify(reading) {
 function createMonitor(courseCodes) {
   const codes = (courseCodes || []).map(c => String(c).trim().toUpperCase()).filter(Boolean);
   const state = new Map(); // code -> { status, name, seats, notified }
-  codes.forEach(c => state.set(c, { status: 'init', name: '', seats: 0, notified: false }));
+  codes.forEach(c => state.set(c, { status: 'init', name: '', seats: 0, slot: '', notified: false }));
 
   return {
     codes,
@@ -90,6 +96,7 @@ function createMonitor(courseCodes) {
         const status = classify(reading);
         const name = reading.name || prev.name;
         const seats = Number.isFinite(reading.seats) ? reading.seats : prev.seats;
+        const slot = reading.slot || prev.slot;
 
         if (status === 'available') {
           // Fire only when the course was previously KNOWN to be not-available
@@ -98,14 +105,14 @@ function createMonitor(courseCodes) {
           // a baseline (no alert) - that is not a Full->Available change.
           const wasKnownNotAvailable = prev.status === 'full' || prev.status === 'unknown';
           if (wasKnownNotAvailable && !prev.notified) {
-            alerts.push({ code, name, seats });
-            state.set(code, { status, name, seats, notified: true });
+            alerts.push({ code, name, seats, slot });
+            state.set(code, { status, name, seats, slot, notified: true });
           } else {
-            state.set(code, { status, name, seats, notified: prev.notified });
+            state.set(code, { status, name, seats, slot, notified: prev.notified });
           }
         } else {
           // full / unknown: reset de-dup so a future re-opening alerts again.
-          state.set(code, { status, name, seats, notified: false });
+          state.set(code, { status, name, seats, slot, notified: false });
         }
       }
       return alerts;
@@ -121,15 +128,17 @@ function buildReaderScript(courseCodes) {
   return (
     '(function(codes){' +
     'var parseRowText=' + parseRowText.toString() + ';' +
+    // Finds the smallest row container holding this course: it contains the code,
+    // a status token, and is short (so it is one row, not the whole page/panel).
     'function rowFor(code){' +
     '  var all=document.querySelectorAll("*");' +
     '  var leaf=null;' +
     '  for(var i=0;i<all.length;i++){var n=all[i];if(n.children.length===0&&n.textContent.trim()===code){leaf=n;break;}}' +
     '  if(!leaf)return null;' +
-    '  var el=leaf;' +
-    '  for(var d=0;d<8&&el;d++){' +
-    '    var t=el.textContent;' +
-    '    if(/\\bleft\\b/i.test(t)||/\\bFull\\b/i.test(t)||/\\bAdd\\b/i.test(t)||/Notif/i.test(t))return el;' +
+    '  var el=leaf.parentElement;' +
+    '  for(var d=0;d<12&&el;d++){' +
+    '    var t=el.textContent.replace(/\\s+/g," ").trim();' +
+    '    if(t.length<=300 && t.indexOf(code)>=0 && (/Notif/i.test(t)||/\\bFull\\b/i.test(t)||/\\bleft\\b/i.test(t)||/\\bAdd\\b/i.test(t)||/\\d+\\s*cr/i.test(t)))return el;' +
     '    el=el.parentElement;' +
     '  }' +
     '  return leaf.closest("div,li,tr")||leaf.parentElement;' +
@@ -154,8 +163,8 @@ function buildHighlightScript(code, seats, name) {
     'var code=info.code;' +
     'function rowFor(code){var all=document.querySelectorAll("*");var leaf=null;' +
     'for(var i=0;i<all.length;i++){var n=all[i];if(n.children.length===0&&n.textContent.trim()===code){leaf=n;break;}}' +
-    'if(!leaf)return null;var el=leaf;for(var d=0;d<8&&el;d++){var t=el.textContent;' +
-    'if(/\\bAdd\\b/i.test(t)||/\\bleft\\b/i.test(t))return el;el=el.parentElement;}' +
+    'if(!leaf)return null;var el=leaf.parentElement;for(var d=0;d<12&&el;d++){var t=el.textContent.replace(/\\s+/g," ").trim();' +
+    'if(t.length<=300&&t.indexOf(code)>=0&&(/Notif/i.test(t)||/\\bFull\\b/i.test(t)||/\\bleft\\b/i.test(t)||/\\bAdd\\b/i.test(t)||/\\d+\\s*cr/i.test(t)))return el;el=el.parentElement;}' +
     'return leaf.closest("div,li,tr")||leaf.parentElement;}' +
     'var row=rowFor(code);' +
     'if(row){row.scrollIntoView({behavior:"smooth",block:"center"});' +

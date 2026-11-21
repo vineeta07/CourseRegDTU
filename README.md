@@ -284,6 +284,7 @@ the instant a full course frees up. It never clicks Add/Submit — **you** do th
 
 **How it works**
 1. In the app, under **Seat Monitor**, enter the course codes to watch (defaults to HU426, HU308, HU404).
+   You may add the slot for display as `CODE:SLOT`, e.g. `HU426:E4`.
 2. Click **Start Monitoring**. A browser window opens on `/register/`.
 3. **Log in there yourself** (solve any verification), open Course Registration, and **keep that window open**.
 4. The app reads that page every few seconds (read-only). When a course changes from **Full → seats available**, it:

@@ -41,6 +41,18 @@ check('parseRowText: strips credits and status from the name', () => {
   const r = parseRowText('EP210', 'EP210Condensed Matter Physics4 credits72 left Add');
   return expect(r.name === 'Condensed Matter Physics', `name was "${r.name}"`);
 });
+check('parseRowText: reads the slot from a row like "E3 · 4 cr"', () => {
+  const r = parseRowText('CS320', 'CS320Block Chain and ApplicationsE3 · 4 cr65 left Add');
+  return expect(r.slot === 'E3' && r.seats === 65 && r.name === 'Block Chain and Applications',
+    `got ${JSON.stringify(r)}`);
+});
+check('Monitor carries the slot through to state and alerts', () => {
+  const m = createMonitor(['HU426']);
+  m.update([{ code: 'HU426', name: 'Language And Social Media', seats: 0, full: true, slot: 'E4' }]);
+  const a = m.update([{ code: 'HU426', name: 'Language And Social Media', seats: 2, full: false, slot: 'E4' }]);
+  return expect(m.getState().HU426.slot === 'E4' && a[0] && a[0].slot === 'E4',
+    `state ${JSON.stringify(m.getState().HU426)} alert ${JSON.stringify(a)}`);
+});
 
 // ---- classify ----
 check('classify: seats>0 is available', () => expect(classify({ seats: 5, full: false }) === 'available', 'not available'));
