@@ -93,7 +93,7 @@
           <option value="fast">Fast - every 2 seconds (use only during the registration rush)</option>
         </select>
       </div>
-      <p class="hint">Safety limits: max 40 requests/min, 2 register tries per course, 15 submits per run. If registration isn't open yet, it waits for it to open. Stops on any warning from the portal. Don't keep refreshing the portal in your browser while this runs.</p>
+      <p class="hint">Safety limits: max 40 requests/min, 2 register tries per course, 15 submits per run. If registration isn't open yet, it waits for it to open. Stops by itself on any problem, and after a portal warning it locks itself for 30–60 min. Stops on any warning from the portal. Don't keep refreshing the portal in your browser while this runs.</p>
       <div class="automation-controls">
         <button id="start-btn">Start Automation</button>
         <button id="stop-btn" class="hidden">Stop Automation</button>

@@ -191,11 +191,11 @@ npm run selftest
 ```
 
 This does **not** contact the real portal. It starts a **fake portal on your own computer** and runs
-the real app code against it in 15 situations: registering by itself, list order, Watch-only,
+the real app code against it in 19 situations: registering by itself, list order, Watch-only,
 refused courses, all captcha types, registration closed, wrong course code, portal warnings,
 429 errors, the Device Suspended page, an expired cookie and the speed limit.
 
-You should see `PASS` on every line and **`15/15 checks passed.`** at the end.
+You should see `PASS` on every line and **`19/19 checks passed.`** at the end.
 If any line says `FAIL`, copy the whole output and send it to the maintainer.
 
 ---
@@ -268,8 +268,21 @@ These are there so your device does not get blocked ("multiple altering requests
   "too many requests" / "blocked" / "suspended", or shows the **Device Access Suspended** page.
 - Only **one copy** of the app can run at a time.
 
-If the app stops because of a warning: **don't restart it right away.** Wait, and register by hand
-on the website if needed.
+**The app stops by itself on any problem.** It never keeps trying after something goes wrong:
+
+| Problem | What the app does |
+|---|---|
+| "Performing security verification" (bot check) page | Stops at once. **Locked for 60 min.** |
+| "Too many requests" / any warning, HTTP 403 or 429 | Stops at once. **Locked for 30 min.** |
+| "Device Access Suspended" page | Stops at once. **Locked for 24 h.** |
+| Any other error from the portal (4xx), or the course list disappears | Stops at once. |
+| A register request fails | Stops; does not retry. |
+| Server/network error (5xx, timeout) | One short retry, then stops after 3 in a row. |
+| Session expires and no password/Auto Login | Stops with a clear message (no login attempts). |
+
+**Lock:** after the portal pushes back, pressing Start shows *"Locked until …"* and does nothing until
+the time is up. This stops anyone from restarting it straight into getting flagged.
+Meanwhile, **register by hand in your normal browser.**
 
 ---
 

@@ -29,7 +29,8 @@ const MIN_GAP_REGISTER_MS = 250;    // a register click right after the page sho
 const MAX_REQUESTS_PER_MINUTE = 40; // hard rate limit across all requests
 const MAX_RELOGINS = 3;             // max automatic re-logins per run
 const RELOGIN_BACKOFF_MS = [0, 5000, 20000]; // 1st re-login is instant
-const MAX_CONSECUTIVE_ERRORS = 10;  // network/5xx errors in a row before slowing down
+const MAX_CONSECUTIVE_ERRORS = 3;   // network/5xx errors in a row before the app stops
+const ERROR_RETRY_WAIT_MS = 5000;   // wait before retrying after a network/5xx error
 
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
@@ -39,7 +40,11 @@ let userAgent = USER_AGENT;
 let lastRequestAt = 0;
 const recentRequests = [];
 
-class SuspendedError extends Error {}
+// The portal pushed back (bot check, rate limit, warning, block). The app stops and
+// refuses to start again for `cooldownMin` minutes so it can't be restarted into a flag.
+class SuspendedError extends Error {
+  constructor(message, cooldownMin = 30) { super(message); this.cooldownMin = cooldownMin; }
+}
 class SessionExpiredError extends Error {}
 class NotOpenError extends Error {}
 
@@ -85,7 +90,8 @@ function checkSuspended(response) {
     throw new SuspendedError(
       'The portal has suspended access for this device. Stopping now. ' +
       'Visit the Examination Department with your ID card' +
-      (ref ? ` and reference code ${ref[1]}` : '') + ' to get it unblocked.'
+      (ref ? ` and reference code ${ref[1]}` : '') + ' to get it unblocked.',
+      24 * 60
     );
   }
 }
@@ -127,7 +133,8 @@ function checkPushback(response) {
   if (BOT_CHECK_RE.test(raw) || response.headers['cf-mitigated']) {
     throw new SuspendedError(
       'The portal is showing a "security verification" (bot check) page. The app has stopped and will not ' +
-      'continue, so your device is not flagged. Register by hand in your normal browser instead.'
+      'continue, so your device is not flagged. Register by hand in your normal browser instead.',
+      60
     );
   }
   if (response.statusCode === 403 || response.statusCode === 429) {
@@ -232,6 +239,9 @@ async function fetchRegistrationPage(session) {
     // Logged in, but the portal sends us elsewhere (e.g. home page): registration not open.
     throw new NotOpenError(`Registration page redirects to ${response.headers.location || 'another page'}`);
   }
+  if (response.statusCode >= 400 && response.statusCode < 500) {
+    throw new Error(`Registration page returned HTTP ${response.statusCode}. Stopping to be safe.`);
+  }
   if (response.statusCode !== 200) {
     const err = new Error(`Registration page returned HTTP ${response.statusCode}`);
     err.statusCode = response.statusCode;
@@ -313,6 +323,7 @@ async function sendRegister(session, row) {
   if (isLoginRedirect(response) && !/courseRegistration/.test(response.headers.location || '')) {
     throw new SessionExpiredError('Session expired.');
   }
+  if (response.statusCode >= 400) throw new Error(`portal answered HTTP ${response.statusCode}`);
   response.requestUrl = url;
   return response;
 }
@@ -428,6 +439,7 @@ async function submitCaptcha(session, captcha, answer, referer) {
     }),
   });
   session.cookies = mergeCookies(response.headers, session.cookies);
+  if (response.statusCode >= 400) throw new Error(`portal answered HTTP ${response.statusCode}`);
   response.requestUrl = url;
   return response;
 }
@@ -598,7 +610,7 @@ async function startAutomation(options, callbacks) {
         html = await fetchRegistrationPage(session);
       } catch (e) {
         if (e instanceof SessionExpiredError) { session = await relogin(session); continue; }
-        if (e instanceof NotOpenError || e.statusCode) {
+        if (e instanceof NotOpenError) {
           if (!waitingSince) waitingSince = Date.now();
           status(`Registration is not open yet (${e.message}). Waiting for it to open... ` +
             `last checked ${new Date().toLocaleTimeString()}`);
@@ -656,11 +668,20 @@ async function startAutomation(options, callbacks) {
       } catch (e) {
         if (e instanceof SuspendedError) throw e;
         if (e instanceof SessionExpiredError) { session = await relogin(session); continue; }
+        if (e instanceof NotOpenError) {
+          throw new Error(`The registration page suddenly redirects elsewhere (${e.message}). Stopping to be safe. Check the portal by hand.`);
+        }
         consecutiveErrors++;
-        const wait = consecutiveErrors >= MAX_CONSECUTIVE_ERRORS ? 30000 : POLL_INTERVAL_MS * 2;
-        status(`Request failed (${e.message}). Retrying in ${wait / 1000}s...`);
-        await delay(wait);
+        if (!e.statusCode && !/timeout|ECONN|ENOTFOUND|EAI_AGAIN|socket|network/i.test(e.message)) throw e;
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          throw new Error(`${consecutiveErrors} failed requests in a row (${e.message}). Stopping to be safe. Check the portal by hand.`);
+        }
+        status(`Request failed (${e.message}). Retrying once in ${ERROR_RETRY_WAIT_MS / 1000}s (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS - 1})...`);
+        await delay(ERROR_RETRY_WAIT_MS);
         continue;
+      }
+      if (page.rows.length === 0) {
+        throw new Error('The course list disappeared from the page (registration closed or the page changed). Stopping to be safe.');
       }
 
       if (page.alert) status(`Portal says: ${page.alert}`);
@@ -737,8 +758,7 @@ async function startAutomation(options, callbacks) {
         } catch (e) {
           if (e instanceof SuspendedError) throw e;
           if (e instanceof SessionExpiredError) { session = await relogin(session); continue; }
-          if (/safety limit/.test(e.message)) throw e;
-          status(`Register request failed: ${e.message}`);
+          throw new Error(`Register request for ${info.courseCode} failed (${e.message}). Stopping to be safe. Check the portal by hand.`);
         }
         await delay(AFTER_POST_DELAY_MS);
         continue;
@@ -749,7 +769,10 @@ async function startAutomation(options, callbacks) {
 
     if (tracked.size === 0) status('All tracked courses handled. Stopping.');
   } catch (error) {
-    if (error instanceof SuspendedError) clearSavedSession(sessionFile);
+    if (error instanceof SuspendedError) {
+      clearSavedSession(sessionFile);
+      if (callbacks.onPortalPushback) callbacks.onPortalPushback({ reason: error.message, cooldownMin: error.cooldownMin });
+    }
     callbacks.onError(error.message);
   } finally {
     isRunning = false;

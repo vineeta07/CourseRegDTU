@@ -70,6 +70,8 @@ const server = http.createServer((req, res) => {
       sc.gets++;
       if (o.sessionExpired) { res.writeHead(302, { location: '/student/login' }); return res.end(); }
       if (o.closedFor && sc.gets <= o.closedFor) return res.end('<h2>Course registration is closed</h2>');
+      if (o.http500From && sc.gets >= o.http500From) { res.writeHead(500); return res.end('error'); }
+      if (o.listGoneAt && sc.gets >= o.listGoneAt) return res.end('<h2>Something changed</h2>');
       if (o.botCheckAt && sc.gets >= o.botCheckAt) { res.writeHead(403); return res.end('<title>Just a moment...</title><h1>exam-setu.dtu.ac.in</h1><p>Performing security verification</p><p>This website uses a security service to protect against malicious bots.</p>'); }
       if (o.suspendAt && sc.gets >= o.suspendAt) return res.end('<h1>DEVICE ACCESS SUSPENDED</h1> Unique Reference Identifier <b>PHMCWSZX</b>');
       if (o.warnAt && sc.gets >= o.warnAt) sc.alert = 'Too many requests, try again later';
@@ -79,6 +81,7 @@ const server = http.createServer((req, res) => {
     }
 
     if (path.startsWith('/student/courseRegister')) {
+      if (o.registerError) { res.writeHead(500); return res.end('server error'); }
       const key = path.endsWith(HASH.A) ? 'A' : 'B';
       if (o.captcha === 'inline') {
         if (body.includes('captcha=' + sc.captcha)) sc.registered[key] = true; else sc.alert = 'Invalid captcha';
@@ -110,7 +113,7 @@ async function run(name, opts, runOpts, check) {
   // Fresh copy of the app for each check (so the per-minute limit starts from zero, like a new run).
   delete require.cache[require.resolve('../automation.js')];
   automation = require('../automation.js');
-  const out = { status: [], registered: [], blocked: [], errors: [], captchaAsks: 0, manualWindows: 0 };
+  const out = { status: [], registered: [], blocked: [], errors: [], captchaAsks: 0, manualWindows: 0, pushback: null };
   const stopTimer = setTimeout(() => automation.stopAutomation(), runOpts.maxMs || 20000);
   await automation.startAutomation({
     credentials: {},
@@ -124,6 +127,7 @@ async function run(name, opts, runOpts, check) {
     onCourseRegistered: c => out.registered.push(c.courseCode),
     onCourseBlocked: c => out.blocked.push(c.courseCode),
     onError: e => out.errors.push(e),
+    onPortalPushback: p => { out.pushback = p; },
     onStop: () => {},
     askCaptcha: async () => { out.captchaAsks++; return { answer: out.captchaAsks === 1 && runOpts.firstCaptchaWrong ? 'WRONG' : sc.captcha }; },
     openManualWindow: async d => { out.manualWindows++; sc.registered.A = true; return d.cookies; },
@@ -209,6 +213,7 @@ server.listen(0, '127.0.0.1', async () => {
   results.push(await run('Portal warning "too many requests": stops immediately',
     { warnAt: 2, seatsAt: 99 }, {}, r => {
       expect(r.errors.some(e => /Portal warning/.test(e)), 'did not stop on the warning');
+      expect(r.pushback && r.pushback.cooldownMin >= 30, 'did not lock restarts after the warning');
       expect(r.posts === 0, 'kept sending requests');
     }));
 
@@ -225,7 +230,32 @@ server.listen(0, '127.0.0.1', async () => {
   results.push(await run('"Performing security verification" (bot check) page: stops immediately, no retries',
     { botCheckAt: 2, seatsAt: 99 }, {}, r => {
       expect(r.errors.some(e => /security verification/i.test(e)), 'did not stop on the bot-check page');
+      expect(r.pushback && r.pushback.cooldownMin >= 60, 'did not lock restarts after the bot check');
       expect(r.log.length === 2, `kept sending requests after the bot check (${r.log.length} requests)`);
+    }));
+
+  results.push(await run('Server errors (HTTP 500) keep happening: stops after 3, no endless retries',
+    { http500From: 2, seatsAt: 99 }, {}, r => {
+      expect(r.errors.some(e => /in a row/.test(e)), 'did not stop after repeated server errors');
+      expect(r.log.length <= 4, `sent ${r.log.length} requests, expected at most 4`);
+    }));
+
+  results.push(await run('Server error before registration opens: stops instead of waiting forever',
+    { http500From: 1 }, { maxMs: 15000 }, r => {
+      expect(r.errors.length > 0, 'kept waiting on a broken page');
+      expect(r.log.length <= 3, `sent ${r.log.length} requests`);
+    }));
+
+  results.push(await run('Course list disappears mid-run: stops',
+    { listGoneAt: 3, seatsAt: 99 }, {}, r => {
+      expect(r.errors.some(e => /disappeared/.test(e)), 'did not stop when the course list vanished');
+      expect(r.log.length === 3, `sent ${r.log.length} requests`);
+    }));
+
+  results.push(await run('Register request gets a server error: stops, does not retry',
+    { registerError: true }, {}, r => {
+      expect(r.errors.some(e => /Register request/.test(e)), 'did not stop after the failed register');
+      expect(r.posts === 1, `sent ${r.posts} register requests`);
     }));
 
   results.push(await run('Expired cookie (no password given): stops with a clear message, no login spam',

@@ -107,9 +107,36 @@ app.on('activate', () => {
   }
 });
 
+// After the portal pushes back (bot check, rate limit, warning, block) the app refuses to
+// start again for a while, so it can't be restarted straight into getting flagged.
+const lockFile = () => path.join(app.getPath('userData'), 'pushback-lock.json');
+
+function readLock() {
+  try {
+    const lock = JSON.parse(fs.readFileSync(lockFile(), 'utf8'));
+    if (lock.until > Date.now()) return lock;
+  } catch (_) {}
+  return null;
+}
+
+function writeLock({ reason, cooldownMin }) {
+  try {
+    fs.writeFileSync(lockFile(), JSON.stringify({ reason, until: Date.now() + cooldownMin * 60000, at: Date.now() }));
+  } catch (_) {}
+}
+
 ipcMain.handle('start-automation', async (event, data) => {
   if (automationRunning) {
     return { success: false, error: 'Automation is already running.' };
+  }
+  const lock = readLock();
+  if (lock) {
+    const until = new Date(lock.until).toLocaleString('en-IN');
+    return {
+      success: false,
+      error: `Locked until ${until} to protect your device. At ${new Date(lock.at).toLocaleTimeString('en-IN')} the portal pushed back: ` +
+        `${lock.reason} Register by hand in your browser in the meantime.`,
+    };
   }
 
   const { creds, courses, autoLogin, manualCookie, manualStudentId, watchOnly, browserUserAgent, speed } = data;
@@ -131,6 +158,7 @@ ipcMain.handle('start-automation', async (event, data) => {
       onCourseRegistered: (course) => win.webContents.send('course-registered', course),
       onCourseBlocked: (course) => win.webContents.send('course-blocked', course),
       onError: (error) => win.webContents.send('automation-error', error),
+      onPortalPushback: writeLock,
       askCaptcha,
       openManualWindow,
       onStop: () => {
