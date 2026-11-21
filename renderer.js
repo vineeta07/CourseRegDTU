@@ -161,6 +161,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
   addCourseBtn.addEventListener('click', () => addCourseRow());
 
+  // Accepts the cookie however it was copied: just the value, a "Cookie: ..." line,
+  // several header lines, or a whole "Copy as cURL" command. Returns "name=value; name2=value2".
+  function cleanCookie(text) {
+    let t = (text || '').trim();
+    if (!t) return '';
+    const curlHeader = t.match(/-H\s+(['"])cookie:\s*([\s\S]*?)\1/i) || t.match(/(?:-b|--cookie)\s+(['"])([\s\S]*?)\1/i);
+    if (curlHeader) t = curlHeader[2];
+    else {
+      const line = t.split(/\r?\n/).find(l => /^\s*cookie\s*:/i.test(l));
+      if (line) t = line;
+    }
+    t = t.replace(/^\s*cookie\s*:\s*/i, '').replace(/\s*\r?\n\s*/g, '').trim();
+    return t.split(';').map(p => p.trim()).filter(p => p.includes('=')).join('; ');
+  }
+
   // ---------- Remember what you typed (on this computer only; password is never saved) ----------
   const SETTINGS_KEY = 'courseRegistrarSettings';
   function saveSettings() {
@@ -210,7 +225,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const rollNo = document.getElementById('roll-no').value.trim();
     const password = document.getElementById('password').value.trim();
     const autoLogin = document.getElementById('auto-login').checked;
-    const manualCookie = document.getElementById('manual-cookie').value.trim();
+    const cookieInput = document.getElementById('manual-cookie');
+    const manualCookie = cleanCookie(cookieInput.value);
+    if (manualCookie && manualCookie !== cookieInput.value.trim()) cookieInput.value = manualCookie;
     let manualStudentId = document.getElementById('manual-student-id').value.trim();
     const idMatch = manualStudentId.match(/([a-f0-9]{24})\/?$/i);
     if (idMatch) manualStudentId = idMatch[1];

@@ -130,7 +130,13 @@ and safer (repeated logins are what get devices blocked).
 5. Click the **Network** tab at the top of that panel, then press **F5** to reload the page.
 6. Click the **first row** in the list (it has the same name as your Student ID).
 7. On the right side, scroll down to **Request Headers** and find the line **`cookie:`**.
-8. Right-click the text after `cookie:` → **Copy value**.
+8. Copy the text after `cookie:`. Any of these works (the app cleans it up):
+   - **Triple-click** the cookie value to select it, then press **Ctrl+C** (Mac: **Cmd+C**), or
+   - right-click it → **Copy value**, or
+   - tick **Raw** next to *Request Headers*, select the `Cookie: ...` line, **Ctrl+C**, or
+   - right-click the first row in the **Name** list → **Copy** → the "Copy as cURL (bash)" option, and paste all of it.
+
+   ⚠️ This cookie **is your login**. Never post it or screenshots of it. To cancel it, log out on the website.
    It looks like `connect.sid=s%3Aabc...; token=xyz...`
 9. *(Optional)* In the same list, copy the value of **`user-agent:`**.
 
