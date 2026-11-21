@@ -165,7 +165,10 @@ function buildHighlightScript(code, seats, name) {
     'var target=btn||row;' +
     'target.style.outline="4px solid #e11d48";target.style.outlineOffset="3px";' +
     'target.style.boxShadow="0 0 0 6px rgba(225,29,72,.35)";' +
-    'var k=0;var iv=setInterval(function(){target.style.outlineColor=(k%2?"#e11d48":"#facc15");k++;if(k>16)clearInterval(iv);},300);}' +
+    'var k=0;var iv=setInterval(function(){target.style.outlineColor=(k%2?"#e11d48":"#facc15");k++;if(k>16)clearInterval(iv);},300);' +
+    // Move KEYBOARD FOCUS to the Add button so a single Enter/Space (pressed by YOU) confirms.
+    // This does not click or submit; it only positions focus. The keystroke is yours.
+    'if(btn){try{btn.focus({preventScroll:true});}catch(e){}}}' +
     'var old=document.getElementById("seatwatch-banner");if(old)old.remove();' +
     'var b=document.createElement("div");b.id="seatwatch-banner";' +
     'b.textContent="SEAT OPEN: "+code+(info.name?(" ("+info.name+")"):"")+" - "+info.seats+" left. Click the highlighted Add button to register.";' +
