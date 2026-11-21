@@ -150,7 +150,7 @@ Cookies expire after some time, so copy a **fresh** one shortly before registrat
 If you leave the cookie boxes empty, enter your **Roll Number** and **Password** instead.
 The app logs in **once** and saves the session for next time.
 Tick **"Auto Login on Session Expiry"** if you want it to log in again by itself when the session
-expires (the first re-login is instant; at most 3 per run).
+expires (at most once per run).
 **"Forget Saved Session"** deletes the saved session.
 
 You can fill both (cookie + roll number/password): the app uses the cookie, and only if it expires
@@ -272,16 +272,15 @@ These are there so your device does not get blocked ("multiple altering requests
 
 | Problem | What the app does |
 |---|---|
-| "Performing security verification" (bot check) page | Stops at once. **Locked for 60 min.** |
-| "Too many requests" / any warning, HTTP 403 or 429 | Stops at once. **Locked for 30 min.** |
-| "Device Access Suspended" page | Stops at once. **Locked for 24 h.** |
+| "Performing security verification" (bot check) page | Stops at once. |
+| "Too many requests" / any warning, HTTP 403 or 429 | Stops at once. |
+| "Device Access Suspended" page | Stops at once. |
 | Any other error from the portal (4xx), or the course list disappears | Stops at once. |
 | A register request fails | Stops; does not retry. |
-| Server/network error (5xx, timeout) | Waits 5 s and tries again; stops after 3 failures in a row. |
+| Server/network error (5xx, timeout) | Waits 5 s and tries **once** more; stops if that fails too. |
 | Session expires and no password/Auto Login | Stops with a clear message (no login attempts). |
 
-**Lock:** after the portal pushes back, pressing Start shows *"Locked until …"* and does nothing until
-the time is up. This stops anyone from restarting it straight into getting flagged.
+If the app stops because the portal pushed back, **don't restart it right away.**
 Meanwhile, **register by hand in your normal browser.**
 
 ---

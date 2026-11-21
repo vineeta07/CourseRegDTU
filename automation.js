@@ -27,9 +27,9 @@ const CAPTCHA_ANSWER_TIMEOUT_MS = 90000; // how long to wait for you to type the
 const MIN_GAP_MS = 1000;            // minimum gap between page loads
 const MIN_GAP_REGISTER_MS = 250;    // a register click right after the page showed a free seat
 const MAX_REQUESTS_PER_MINUTE = 40; // hard rate limit across all requests
-const MAX_RELOGINS = 3;             // max automatic re-logins per run
-const RELOGIN_BACKOFF_MS = [0, 5000, 20000]; // 1st re-login is instant
-const MAX_CONSECUTIVE_ERRORS = 3;   // network/5xx errors in a row before the app stops
+const MAX_RELOGINS = 1;             // max automatic re-logins per run
+const RELOGIN_BACKOFF_MS = [0];     // the one re-login happens at once
+const MAX_CONSECUTIVE_ERRORS = 2;   // network/5xx errors in a row before the app stops (= 1 retry)
 const ERROR_RETRY_WAIT_MS = 5000;   // wait before retrying after a network/5xx error
 
 const USER_AGENT =
@@ -40,11 +40,8 @@ let userAgent = USER_AGENT;
 let lastRequestAt = 0;
 const recentRequests = [];
 
-// The portal pushed back (bot check, rate limit, warning, block). The app stops and
-// refuses to start again for `cooldownMin` minutes so it can't be restarted into a flag.
-class SuspendedError extends Error {
-  constructor(message, cooldownMin = 30) { super(message); this.cooldownMin = cooldownMin; }
-}
+// The portal pushed back (bot check, rate limit, warning, block). The app stops at once.
+class SuspendedError extends Error {}
 class SessionExpiredError extends Error {}
 class NotOpenError extends Error {}
 
@@ -90,8 +87,7 @@ function checkSuspended(response) {
     throw new SuspendedError(
       'The portal has suspended access for this device. Stopping now. ' +
       'Visit the Examination Department with your ID card' +
-      (ref ? ` and reference code ${ref[1]}` : '') + ' to get it unblocked.',
-      24 * 60
+      (ref ? ` and reference code ${ref[1]}` : '') + ' to get it unblocked.'
     );
   }
 }
@@ -133,8 +129,7 @@ function checkPushback(response) {
   if (BOT_CHECK_RE.test(raw) || response.headers['cf-mitigated']) {
     throw new SuspendedError(
       'The portal is showing a "security verification" (bot check) page. The app has stopped and will not ' +
-      'continue, so your device is not flagged. Register by hand in your normal browser instead.',
-      60
+      'continue, so your device is not flagged. Register by hand in your normal browser instead.'
     );
   }
   if (response.statusCode === 403 || response.statusCode === 429) {
@@ -769,10 +764,7 @@ async function startAutomation(options, callbacks) {
 
     if (tracked.size === 0) status('All tracked courses handled. Stopping.');
   } catch (error) {
-    if (error instanceof SuspendedError) {
-      clearSavedSession(sessionFile);
-      if (callbacks.onPortalPushback) callbacks.onPortalPushback({ reason: error.message, cooldownMin: error.cooldownMin });
-    }
+    if (error instanceof SuspendedError) clearSavedSession(sessionFile);
     callbacks.onError(error.message);
   } finally {
     isRunning = false;

@@ -113,7 +113,7 @@ async function run(name, opts, runOpts, check) {
   // Fresh copy of the app for each check (so the per-minute limit starts from zero, like a new run).
   delete require.cache[require.resolve('../automation.js')];
   automation = require('../automation.js');
-  const out = { status: [], registered: [], blocked: [], errors: [], captchaAsks: 0, manualWindows: 0, pushback: null };
+  const out = { status: [], registered: [], blocked: [], errors: [], captchaAsks: 0, manualWindows: 0 };
   const stopTimer = setTimeout(() => automation.stopAutomation(), runOpts.maxMs || 20000);
   await automation.startAutomation({
     credentials: {},
@@ -127,7 +127,6 @@ async function run(name, opts, runOpts, check) {
     onCourseRegistered: c => out.registered.push(c.courseCode),
     onCourseBlocked: c => out.blocked.push(c.courseCode),
     onError: e => out.errors.push(e),
-    onPortalPushback: p => { out.pushback = p; },
     onStop: () => {},
     askCaptcha: async () => { out.captchaAsks++; return { answer: out.captchaAsks === 1 && runOpts.firstCaptchaWrong ? 'WRONG' : sc.captcha }; },
     openManualWindow: async d => { out.manualWindows++; sc.registered.A = true; return d.cookies; },
@@ -213,7 +212,6 @@ server.listen(0, '127.0.0.1', async () => {
   results.push(await run('Portal warning "too many requests": stops immediately',
     { warnAt: 2, seatsAt: 99 }, {}, r => {
       expect(r.errors.some(e => /Portal warning/.test(e)), 'did not stop on the warning');
-      expect(r.pushback && r.pushback.cooldownMin >= 30, 'did not lock restarts after the warning');
       expect(r.posts === 0, 'kept sending requests');
     }));
 
@@ -230,14 +228,13 @@ server.listen(0, '127.0.0.1', async () => {
   results.push(await run('"Performing security verification" (bot check) page: stops immediately, no retries',
     { botCheckAt: 2, seatsAt: 99 }, {}, r => {
       expect(r.errors.some(e => /security verification/i.test(e)), 'did not stop on the bot-check page');
-      expect(r.pushback && r.pushback.cooldownMin >= 60, 'did not lock restarts after the bot check');
       expect(r.log.length === 2, `kept sending requests after the bot check (${r.log.length} requests)`);
     }));
 
-  results.push(await run('Server errors (HTTP 500) keep happening: stops after 3, no endless retries',
+  results.push(await run('Server errors (HTTP 500) keep happening: one retry, then stops',
     { http500From: 2, seatsAt: 99 }, {}, r => {
       expect(r.errors.some(e => /in a row/.test(e)), 'did not stop after repeated server errors');
-      expect(r.log.length <= 4, `sent ${r.log.length} requests, expected at most 4`);
+      expect(r.log.length <= 3, `sent ${r.log.length} requests, expected at most 3`);
     }));
 
   results.push(await run('Server error before registration opens: stops instead of waiting forever',
