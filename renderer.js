@@ -15,14 +15,21 @@ document.addEventListener('DOMContentLoaded', () => {
     codeInput.type = 'text';
     codeInput.placeholder = 'Course Code, optionally :Slot (e.g. HU426:E4)';
     codeInput.value = code;
+    codeInput.setAttribute('aria-label', 'Course code');
     const removeBtn = document.createElement('button');
     removeBtn.textContent = 'Remove';
     removeBtn.className = 'remove-course';
+    removeBtn.type = 'button';
+    removeBtn.setAttribute('aria-label', 'Remove course');
     removeBtn.addEventListener('click', () => { monitorCourseList.removeChild(row); saveMonitorCodes(); });
     codeInput.addEventListener('input', saveMonitorCodes);
+    codeInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter') addMonitorRow();
+    });
     row.appendChild(codeInput);
     row.appendChild(removeBtn);
     monitorCourseList.appendChild(row);
+    if (!code) codeInput.focus();
   }
 
   // Entries may be "HU426" or "HU426:E4" (slot is just a display label; matching is by code).
@@ -50,8 +57,11 @@ document.addEventListener('DOMContentLoaded', () => {
   (function loadMonitorCodes() {
     let codes = [];
     try { codes = JSON.parse(localStorage.getItem('monitorCodes') || 'null') || []; } catch (_) {}
-    if (!codes.length) codes = ['HU426:E4', 'HU308:E4', 'HU404:E4'];
-    codes.forEach(c => addMonitorRow(c));
+    if (codes.length) {
+      codes.forEach(c => addMonitorRow(c));
+    } else {
+      addMonitorRow();
+    }
   })();
 
   monitorAddBtn.addEventListener('click', () => addMonitorRow());
@@ -134,7 +144,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const li = document.createElement('li');
     li.className = 'log-good';
     const slot = slotLabelFor(a.code) || a.slot || '';
-    li.textContent = `🔔 SEAT OPEN: ${a.code}${slot ? ` [${slot}]` : ''}${a.name ? ' — ' + a.name : ''} — ${a.seats} left! Press Enter / click Add. Do NOT click Submit.`;
+    li.textContent = `🔔 SEAT OPEN: ${a.code}${slot ? ` [${slot}]` : ''}${a.name ? ' — ' + a.name : ''} — ${a.seats} left! Attempting to add. Do NOT click Submit.`;
     monitorStateList.prepend(li);
   });
 });

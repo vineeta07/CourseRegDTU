@@ -9,9 +9,9 @@
 //     desktop notification + sound.
 //
 // What it deliberately does NOT do:
-//   * It never clicks Add / Register / Submit and never writes to the portal.
-//     It only OBSERVES the page the user has already opened and verified.
-//     The final registration click is always left to the user.
+//   * It never clicks Register / Submit and never completes final submission.
+//     It may add a course through the matching row's Add control, but the final
+//     registration click always remains a separate action.
 //
 // The core logic here is pure and unit-tested (see selftest/monitor.run.js).
 // The DOM reader (buildReaderScript) is executed inside the user's own
@@ -57,6 +57,7 @@ function parseRowText(code, text) {
 // Turn a reading into a status: 'available' | 'full' | 'unknown'.
 function classify(reading) {
   if (!reading) return 'unknown';
+  if (reading.added) return 'unknown';
   if (Number.isFinite(reading.seats) && reading.seats > 0) return 'available';
   if (reading.full) return 'full';
   return 'unknown';
@@ -74,6 +75,13 @@ function createMonitor(courseCodes) {
       const out = {};
       for (const c of codes) out[c] = { ...state.get(c) };
       return out;
+    },
+    resetCode(code) {
+      const c = String(code).trim().toUpperCase();
+      if (state.has(c)) {
+        const current = state.get(c);
+        state.set(c, { ...current, notified: false });
+      }
     },
     // readings: array of { code, name, seats, full } read from the page.
     // Returns an array of alerts { code, name, seats } for Full->Available
@@ -99,12 +107,9 @@ function createMonitor(courseCodes) {
         const slot = reading.slot || prev.slot;
 
         if (status === 'available') {
-          // Fire only when the course was previously KNOWN to be not-available
-          // (full/unknown) and we have not already notified for this opening.
-          // A course that is available on the very first sighting is treated as
-          // a baseline (no alert) - that is not a Full->Available change.
-          const wasKnownNotAvailable = prev.status === 'full' || prev.status === 'unknown';
-          if (wasKnownNotAvailable && !prev.notified) {
+          // Add/alert for an opening whether it appeared after Full or was already
+          // available when monitoring began. De-duplicate until it becomes Full.
+          if (!prev.notified) {
             alerts.push({ code, name, seats, slot });
             state.set(code, { status, name, seats, slot, notified: true });
           } else {
@@ -128,20 +133,23 @@ function buildReaderScript(courseCodes) {
   return (
     '(function(codes){' +
     'var parseRowText=' + parseRowText.toString() + ';' +
-    // Finds the smallest row container holding this course: it contains the code,
-    // a status token, and is short (so it is one row, not the whole page/panel).
+    // Search by course-code text, then ascend to the smallest course-row container.
+    // The portal nests the code in spans and may render only one slot at a time.
     'function rowFor(code){' +
     '  var all=document.querySelectorAll("*");' +
-    '  var leaf=null;' +
-    '  for(var i=0;i<all.length;i++){var n=all[i];if(n.children.length===0&&n.textContent.trim()===code){leaf=n;break;}}' +
+    '  var leaf=null,best=null,bestLen=999999;' +
+    '  for(var i=0;i<all.length;i++){var n=all[i];var tx=(n.textContent||"").replace(/\\s+/g," ").trim();' +
+    '  if(n.children.length===0&&new RegExp("(\\\\b|[^A-Za-z])"+code+"(\\\\b|[^A-Za-z])","i").test(tx)){leaf=n;break;}' +
+    '  if(n.children.length>0&&tx.length<=500&&new RegExp("(\\\\b|[^A-Za-z])"+code+"(\\\\b|[^A-Za-z])","i").test(tx)){if(tx.length<bestLen){best=n;bestLen=tx.length;}}}' +
+    '  if(!leaf)leaf=best;' +
     '  if(!leaf)return null;' +
-    '  var el=leaf.parentElement;' +
-    '  for(var d=0;d<12&&el;d++){' +
-    '    var t=el.textContent.replace(/\\s+/g," ").trim();' +
-    '    if(t.length<=300 && t.indexOf(code)>=0 && (/Notif/i.test(t)||/\\bFull\\b/i.test(t)||/\\bleft\\b/i.test(t)||/\\bAdd\\b/i.test(t)||/\\d+\\s*cr/i.test(t)))return el;' +
+    '  var el=leaf;' +
+    '  for(var d=0;d<16&&el;d++){' +
+    '    var t=(el.textContent||"").replace(/\\s+/g," ").trim();' +
+    '    if(t.length<=500&&t.toUpperCase().indexOf(code)>=0&&(/Notif/i.test(t)||/\\bFull\\b/i.test(t)||/\\bleft\\b/i.test(t)||/\\bAdd\\b/i.test(t)||/\\bAdded\\b/i.test(t)||/\\d+\\s*cr/i.test(t)||/\\d+\\s*credits?/i.test(t))){return el;}' +
     '    el=el.parentElement;' +
     '  }' +
-    '  return leaf.closest("div,li,tr")||leaf.parentElement;' +
+    '  return leaf.closest("div,li,tr")||leaf.parentElement||leaf;' +
     '}' +
     'return codes.map(function(code){' +
     '  var row=rowFor(code);' +
@@ -153,39 +161,33 @@ function buildReaderScript(courseCodes) {
   );
 }
 
-// Builds a READ-ONLY script that, when a seat opens, brings the course into view
-// and highlights its Add button + shows a banner — WITHOUT clicking anything.
-// The user still makes the final click. It styles, scrolls and adds a banner only.
-function buildHighlightScript(code, seats, name) {
+// Builds a script that finds the matching course row and exact + Add button,
+// and returns the button's viewport coordinates for one normal mouse click.
+// It never searches for or interacts with a Submit control.
+function buildAddCourseScript(code, seats, name) {
   const info = JSON.stringify({ code: String(code), seats: Number(seats) || 0, name: String(name || '') });
   return (
     '(function(info){try{' +
     'var code=info.code;' +
-    'function rowFor(code){var all=document.querySelectorAll("*");var leaf=null;' +
-    'for(var i=0;i<all.length;i++){var n=all[i];if(n.children.length===0&&n.textContent.trim()===code){leaf=n;break;}}' +
-    'if(!leaf)return null;var el=leaf.parentElement;for(var d=0;d<12&&el;d++){var t=el.textContent.replace(/\\s+/g," ").trim();' +
-    'if(t.length<=300&&t.indexOf(code)>=0&&(/Notif/i.test(t)||/\\bFull\\b/i.test(t)||/\\bleft\\b/i.test(t)||/\\bAdd\\b/i.test(t)||/\\d+\\s*cr/i.test(t)))return el;el=el.parentElement;}' +
-    'return leaf.closest("div,li,tr")||leaf.parentElement;}' +
-    'var row=rowFor(code);' +
-    'if(row){row.scrollIntoView({behavior:"smooth",block:"center"});' +
-    'var cands=row.querySelectorAll("button,a,[role=button]");var btn=null;' +
-    'for(var i=0;i<cands.length;i++){var tx=cands[i].textContent.replace(/\\s+/g," ").trim();' +
-    'if(/^\\+?\\s*Add$/i.test(tx)){btn=cands[i];break;}}' +
-    'var target=btn||row;' +
-    'target.style.outline="4px solid #e11d48";target.style.outlineOffset="3px";' +
-    'target.style.boxShadow="0 0 0 6px rgba(225,29,72,.35)";' +
-    'var k=0;var iv=setInterval(function(){target.style.outlineColor=(k%2?"#e11d48":"#facc15");k++;if(k>16)clearInterval(iv);},300);' +
-    // Move KEYBOARD FOCUS to the Add button so a single Enter/Space (pressed by YOU) confirms.
-    // This does not click or submit; it only positions focus. The keystroke is yours.
-    'if(btn){try{btn.focus({preventScroll:true});}catch(e){}}}' +
-    'var old=document.getElementById("seatwatch-banner");if(old)old.remove();' +
-    'var b=document.createElement("div");b.id="seatwatch-banner";' +
-    'b.textContent="SEAT OPEN: "+code+(info.name?(" ("+info.name+")"):"")+" - "+info.seats+" left. Press Enter / click the highlighted Add button to add it. Do NOT click the final Submit button - that locks your choices.";' +
-    'b.style.cssText="position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#e11d48;color:#fff;font:bold 18px system-ui,Arial,sans-serif;padding:14px 20px;text-align:center;box-shadow:0 2px 14px rgba(0,0,0,.45)";' +
-    'document.body.appendChild(b);' +
-    'setTimeout(function(){var x=document.getElementById("seatwatch-banner");if(x)x.remove();},30000);' +
-    'return true;}catch(e){return false;}})(' + info + ')'
+    'function findTarget(code){var all=document.querySelectorAll("body *");' +
+    'for(var i=0;i<all.length;i++){var leaf=all[i];if(leaf.children.length!==0)continue;' +
+    'var tx=(leaf.textContent||"").replace(/\\s+/g," ").trim();if(tx.toUpperCase()!==code)continue;' +
+    'var el=leaf;for(var d=0;d<16&&el;d++){var rowText=(el.textContent||"").replace(/\\s+/g," ").trim();' +
+    'if(/\\b(Added|Drop)\\b/i.test(rowText)){el=null;break;}'+
+    'var cands=el.querySelectorAll("button,a,[role=button],input[type=button]");' +
+    'for(var j=0;j<cands.length;j++){var c=cands[j];var ct=(c.textContent||c.value||c.getAttribute("aria-label")||"").replace(/\\s+/g," ").replace(/\\u00a0/g," ").trim();' +
+    'if(/^\\+?\\s*Add$/i.test(ct)&&c.offsetParent!==null){return {row:el,button:c};}}el=el.parentElement;}'+
+    '}return null;}' +
+    'var target=findTarget(code);' +
+    'if(!target)return {success:false,found:false,buttonFound:false,changed:false};' +
+    'var row=target.row,btn=target.button;' +
+    'row.scrollIntoView({behavior:"smooth",block:"center"});' +
+    'var r=btn.getBoundingClientRect();' +
+    'btn.focus({preventScroll:true});' +
+    'try{btn.click();}catch(e){return {success:false,found:true,buttonFound:true,changed:false,x:r.left+r.width/2,y:r.top+r.height/2,error:String(e)};}' +
+    'return {success:true,found:true,buttonFound:true,changed:false,x:r.left+r.width/2,y:r.top+r.height/2};' +
+    '}catch(e){return {success:false,found:false,buttonFound:false,changed:false,error:String(e)}}})(' + info + ')'
   );
 }
 
-module.exports = { PORTAL_URL, parseRowText, classify, createMonitor, buildReaderScript, buildHighlightScript };
+module.exports = { PORTAL_URL, parseRowText, classify, createMonitor, buildReaderScript, buildAddCourseScript };

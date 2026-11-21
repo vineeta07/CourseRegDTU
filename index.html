@@ -19,14 +19,15 @@
         Read-only watcher for the redesigned portal. It opens a browser window: <b>log in there
         yourself</b> (solve any verification), go to Course Registration, and <b>keep that window open</b>.
         It watches the courses below and, when one changes from <b>Full → seats available</b>, it gives a
-        <b>loud desktop alert</b> and focuses that course's <b>Add</b> button. It never clicks anything — <b>you</b>
-        press Enter / click <b>Add</b>. Clicking Add adds the course; <b>never click the final Submit</b> (it locks your choices).</p>
+        <b>loud desktop alert</b>, selects that course, and clicks only its <b>+ Add</b> button.
+        It <b>never clicks the final Submit button</b>, so your choices are not locked.</p>
       <p class="hint">It keeps watching while minimised or in the background and refreshes the portal every ~30s, so it catches drops hands-free and alerts your laptop. Keep the <b>portal window open</b> (minimised is fine) and your <b>laptop awake</b> — if the lid closes and it sleeps, nothing runs until it wakes.
       </p>
+      <h3>Courses to watch</h3>
       <div id="monitor-course-list">
-        <!-- monitor course rows -->
+        <!-- Only rows filled by the user are added to the watch list. -->
       </div>
-      <button id="monitor-add-course" class="small-btn">Add course to monitor</button>
+      <button id="monitor-add-course" class="small-btn" type="button">Add course</button>
       <div class="automation-controls" style="margin-top:12px;">
         <button id="monitor-start-btn">Start Monitoring</button>
         <button id="monitor-stop-btn" class="hidden">Stop Monitoring</button>

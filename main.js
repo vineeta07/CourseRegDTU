@@ -3,7 +3,7 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const notifier = require('node-notifier');
-const { createMonitor, buildReaderScript, buildHighlightScript, PORTAL_URL } = require('./monitor');
+const { createMonitor, buildReaderScript, buildAddCourseScript, PORTAL_URL } = require('./monitor');
 
 let win;
 
@@ -12,10 +12,9 @@ let monitorWin = null;     // the real browser window the USER logs into
 let monitorTimer = null;
 let monitor = null;        // monitor.js state machine
 let monitorFails = 0;
-const MONITOR_INTERVAL_MS = 4000;
+let attemptedSlots = new Set();
+const MONITOR_INTERVAL_MS = 3000;
 const MONITOR_MAX_FAILS = 5;
-const PORTAL_REFRESH_MS = 30000; // reload the portal this often so seat numbers are current
-let lastReloadAt = 0;
 
 // Bring the app to the front and get attention (a seat just opened).
 function grabAttention() {
@@ -78,6 +77,7 @@ ipcMain.handle('start-monitor', async (event, data) => {
 
   monitor = createMonitor(codes);
   monitorFails = 0;
+  attemptedSlots = new Set();
   lastReloadAt = Date.now();
   const reader = buildReaderScript(codes);
 
@@ -105,18 +105,6 @@ ipcMain.handle('start-monitor', async (event, data) => {
   monitorTimer = setInterval(async () => {
     if (!monitorWin || monitorWin.isDestroyed()) return;
 
-    // The portal does NOT update seat numbers on its own, so periodically reload it to
-    // pull fresh data. Skip the reload while a tracked course is already open, so we never
-    // wipe the highlighted Add button out from under you. A ~30s reload is human-paced.
-    const stNow = monitor ? monitor.getState() : {};
-    const anyOpen = Object.keys(stNow).some(c => stNow[c].status === 'available');
-    if (!anyOpen && Date.now() - lastReloadAt >= PORTAL_REFRESH_MS) {
-      lastReloadAt = Date.now();
-      try { monitorWin.webContents.reload(); } catch (_) {}
-      monitorStatus('info', 'Refreshing the portal for current seats…');
-      return; // let the page load; the next tick reads fresh data
-    }
-
     let readings;
     try {
       readings = await monitorWin.webContents.executeJavaScript(reader, true);
@@ -140,19 +128,38 @@ ipcMain.handle('start-monitor', async (event, data) => {
     }
 
     for (const a of alerts) {
+      // Try at most one open course from each slot. This allows CH310n:E4 and
+      // another course in E1/E2/E3, while preventing duplicate requests for
+      // courses that share the same slot.
+      const slot = String(a.slot || '').trim().toUpperCase();
+      if (slot && attemptedSlots.has(slot)) continue;
+      if (slot) attemptedSlots.add(slot);
       try {
         notifier.notify({
           title: `SEAT OPEN: ${a.code}`,
-          message: `${a.name || a.code} - ${a.seats} seat(s) left. Press Enter / click Add in the portal window. Do NOT click Submit.`,
+          message: `${a.name || a.code} - ${a.seats} seat(s) left. Attempting to add; do NOT click Submit.`,
           sound: true,
           wait: false,
         });
       } catch (_) {}
       grabAttention();
-      // Bring the course into view and highlight + focus its Add button (read-only; no click).
+      // Select the matching course row and click only its Add control.
       if (monitorWin && !monitorWin.isDestroyed()) {
         try { monitorWin.show(); monitorWin.focus(); } catch (_) {}
-        try { await monitorWin.webContents.executeJavaScript(buildHighlightScript(a.code, a.seats, a.name), true); } catch (_) {}
+        let actionResult = null;
+        try { actionResult = await monitorWin.webContents.executeJavaScript(buildAddCourseScript(a.code, a.seats, a.name), true); } catch (_) {}
+        if (actionResult && actionResult.buttonFound) {
+          await new Promise(resolve => setTimeout(resolve, 2500));
+          try {
+            const after = await monitorWin.webContents.executeJavaScript(reader, true);
+            const confirmed = (after || []).find(r => r && r.code === a.code && r.added);
+            if (confirmed) {
+              monitorStatus('info', `${a.code} was added. Do not click the final Submit button.`);
+            } else {
+              monitorStatus('warn', `${a.code} Add click could not be confirmed. No automatic retry will be sent.`);
+            }
+          } catch (_) {}
+        }
       }
       if (win && !win.isDestroyed()) win.webContents.send('monitor-alert', a);
     }

@@ -6,7 +6,7 @@
 //
 // Run:  npm run selftest:monitor
 
-const { parseRowText, classify, createMonitor, buildReaderScript, buildHighlightScript, PORTAL_URL } = require('../monitor.js');
+const { parseRowText, classify, createMonitor, buildReaderScript, buildAddCourseScript, PORTAL_URL } = require('../monitor.js');
 
 let passed = 0, failed = 0;
 function check(name, fn) {
@@ -56,8 +56,10 @@ check('Monitor carries the slot through to state and alerts', () => {
 
 // ---- classify ----
 check('classify: seats>0 is available', () => expect(classify({ seats: 5, full: false }) === 'available', 'not available'));
+check('classify: 1 seat is available immediately', () => expect(classify({ seats: 1, full: false }) === 'available', '1 seat was not available'));
 check('classify: Full with 0 seats is full', () => expect(classify({ seats: 0, full: true }) === 'full', 'not full'));
 check('classify: nothing known is unknown', () => expect(classify({ seats: 0, full: false }) === 'unknown', 'not unknown'));
+check('classify: already-added course is never available', () => expect(classify({ seats: 51, full: false, added: true }) === 'unknown', 'added course was available'));
 
 // ---- transition + de-duplication ----
 check('Full -> Available fires exactly once', () => {
@@ -83,10 +85,10 @@ check('Available -> Full -> Available fires again (re-opens)', () => {
   const a2 = m.update([{ code: 'HU404', seats: 3, full: false }]);
   return expect(a1.length === 1 && a2.length === 1, `fire1=${a1.length} fire2=${a2.length}`);
 });
-check('Available on first sighting is a baseline, not an alert', () => {
+check('Available on first sighting is added immediately', () => {
   const m = createMonitor(['CH314m']);
   const a = m.update([{ code: 'CH314m', seats: 63, full: false }]);
-  return expect(a.length === 0, `wrongly fired ${JSON.stringify(a)}`);
+  return expect(a.length === 1 && a[0].seats === 63, `got ${JSON.stringify(a)}`);
 });
 check('Three courses are tracked independently', () => {
   const m = createMonitor(['HU426', 'HU308', 'HU404']);
@@ -127,23 +129,32 @@ check('Reader script targets the portal and is READ-ONLY (no click/add/submit)',
   );
 });
 
-// ---- the focus/highlight script must help you click, but NEVER click itself ----
-check('Highlight script scrolls to the course and highlights, but does NOT click/submit', () => {
-  const s = buildHighlightScript('HU426', 3, 'Language And Social Media');
-  const clicks = /\.click\(|\.submit\(|courseRegister|form\.submit|\.requestSubmit\(|dispatchEvent/i;
+// ---- the action script selects and adds only the matching course ----
+check('Add script scrolls to the course, selects it, and clicks its Add control', () => {
+  const s = buildAddCourseScript('HU426', 3, 'Language And Social Media');
   return expect(
     typeof s === 'string' &&
     s.includes('HU426') &&
     s.includes('scrollIntoView') &&
-    s.includes('seatwatch-banner') &&
-    !clicks.test(s),
-    'highlight script is not a safe, no-click helper'
+    s.includes('send') === false &&
+    s.includes('getBoundingClientRect') &&
+    s.includes('Add') &&
+    s.includes('Added|Drop') &&
+    !s.includes('dispatchEvent'),
+    'add script does not select and click the course'
   );
 });
-check('Highlight script finds the "Add" button without matching "Added"', () => {
-  const s = buildHighlightScript('HU308', 1, '');
-  // It must look for an exact Add label, not merely the substring "Add".
-  return expect(/\^\\\+\?\\s\*Add\$/.test(s) || s.includes('Add$'), 'does not anchor the Add match');
+check('Add script never targets Submit', () => {
+  const s = buildAddCourseScript('HU308', 1, '');
+  return expect(
+    !s.includes('input[type=submit]') &&
+    !/querySelector(All)?\([^)]*[Ss]ubmit/i.test(s),
+    'add script may contain an unsafe Submit target'
+  );
+});
+check('Add script finds the exact "+ Add" button without matching "Added"', () => {
+  const s = buildAddCourseScript('HU308', 1, '');
+  return expect(s.includes('^\\+?\\s*Add$'), 'does not anchor the exact Add match');
 });
 
 console.log(`\n${passed}/${passed + failed} checks passed.`);

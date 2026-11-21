@@ -138,6 +138,16 @@ h2 {
   animation: fadeIn 0.4s ease-out;
 }
 
+#monitor-course-list:empty {
+  display: none;
+}
+
+#monitor-card h3 {
+  margin: 16px 0 10px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
 .course-row input {
   flex: 1;
   padding: 12px 16px;
