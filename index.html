@@ -96,6 +96,7 @@
       <p class="hint">Safety limits: max 40 requests/min, 2 register tries per course, 15 submits per run. If registration isn't open yet, it waits for it to open. Stops by itself on any problem. Stops on any warning from the portal. Don't keep refreshing the portal in your browser while this runs.</p>
       <div class="automation-controls">
         <button id="start-btn">Start Automation</button>
+        <button id="retry-btn" class="hidden" title="Give every course fresh register tries, including ones it gave up on">Try again now</button>
         <button id="stop-btn" class="hidden">Stop Automation</button>
       </div>
       <div id="status-area"></div>

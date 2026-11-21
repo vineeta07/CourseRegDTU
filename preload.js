@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   startAutomation: (data) => ipcRenderer.invoke('start-automation', data),
   stopAutomation: () => ipcRenderer.invoke('stop-automation'),
+  retryNow: () => ipcRenderer.invoke('retry-now'),
   clearSession: () => ipcRenderer.invoke('clear-session'),
   onCaptchaRequest: (callback) => ipcRenderer.on('captcha-request', callback),
   onCaptchaCancel: (callback) => ipcRenderer.on('captcha-cancel', callback),

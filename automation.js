@@ -36,6 +36,7 @@ const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 
 let isRunning = false;
+let retryRequested = false; // set by the "Try again now" button
 let userAgent = USER_AGENT;
 let lastRequestAt = 0;
 const recentRequests = [];
@@ -654,7 +655,17 @@ async function startAutomation(options, callbacks) {
       `${Array.from(tracked.values()).map(i => `${i.courseCode}(${i.seats} seats)`).join(', ')}. Checking every ${POLL_INTERVAL_MS / 1000}s...`);
     let consecutiveErrors = 0;
 
-    while (isRunning && tracked.size > 0) {
+    const dropped = new Map(); // courses given up on after refusals (can be retried)
+
+    while (isRunning && (tracked.size > 0 || (retryRequested && dropped.size > 0))) {
+      // "Try again now": give every course fresh tries, including ones given up on.
+      if (retryRequested) {
+        retryRequested = false;
+        for (const [hash, info] of dropped) tracked.set(hash, info);
+        dropped.clear();
+        for (const info of tracked.values()) { info.posts = 0; info.lastFailedSeats = null; }
+        status(`Trying again: ${Array.from(tracked.values()).map(i => i.courseCode).join(', ')} - each gets fresh tries at the next free seat.`);
+      }
       let page;
       try {
         lastHtml = await fetchRegistrationPage(session);
@@ -731,8 +742,9 @@ async function startAutomation(options, callbacks) {
         const info = tracked.get(target);
         if (info.posts >= MAX_POSTS_PER_COURSE) {
           tracked.delete(target);
+          dropped.set(target, info);
           callbacks.onCourseBlocked(info);
-          status(`${info.courseCode}: server refused ${MAX_POSTS_PER_COURSE} times (clash/ineligible?). Dropped so the account isn't flagged.`);
+          status(`${info.courseCode}: server refused ${MAX_POSTS_PER_COURSE} times (clash/ineligible?). Paused this course - press "Try again now" to retry it.`);
           continue;
         }
         info.posts++;
@@ -772,8 +784,13 @@ async function startAutomation(options, callbacks) {
   }
 }
 
+function retryNow() {
+  if (isRunning) retryRequested = true;
+  return isRunning;
+}
+
 function stopAutomation() {
   isRunning = false;
 }
 
-module.exports = { startAutomation, stopAutomation };
+module.exports = { startAutomation, stopAutomation, retryNow };

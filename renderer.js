@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const courseList = document.getElementById('course-list');
   const startBtn = document.getElementById('start-btn');
   const stopBtn = document.getElementById('stop-btn');
+  const retryBtn = document.getElementById('retry-btn');
   const statusArea = document.getElementById('status-area');
   const activityLog = document.getElementById('activity-log');
 
@@ -106,6 +107,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function setUIState(isAutomationRunning) {
     startBtn.classList.toggle('hidden', isAutomationRunning);
     stopBtn.classList.toggle('hidden', !isAutomationRunning);
+    retryBtn.classList.toggle('hidden', !isAutomationRunning);
     addCourseBtn.disabled = isAutomationRunning;
     jsonInputBtn.disabled = isAutomationRunning;
 
@@ -159,6 +161,44 @@ document.addEventListener('DOMContentLoaded', () => {
 
   addCourseBtn.addEventListener('click', () => addCourseRow());
 
+  // ---------- Remember what you typed (on this computer only; password is never saved) ----------
+  const SETTINGS_KEY = 'courseRegistrarSettings';
+  function saveSettings() {
+    try {
+      const courses = Array.from(document.querySelectorAll('.course-row')).map(row => {
+        const inputs = row.querySelectorAll('input');
+        return { code: inputs[0].value.trim(), slot: inputs[1].value.trim() };
+      }).filter(c => c.code || c.slot);
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+        rollNo: document.getElementById('roll-no').value.trim(),
+        autoLogin: document.getElementById('auto-login').checked,
+        manualCookie: document.getElementById('manual-cookie').value.trim(),
+        manualStudentId: document.getElementById('manual-student-id').value.trim(),
+        browserUA: document.getElementById('browser-ua').value.trim(),
+        speed: document.getElementById('speed').value,
+        courses,
+      }));
+    } catch (_) {}
+  }
+  function loadSettings() {
+    try {
+      const st = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+      if (!st) return;
+      document.getElementById('roll-no').value = st.rollNo || '';
+      document.getElementById('auto-login').checked = !!st.autoLogin;
+      document.getElementById('manual-cookie').value = st.manualCookie || '';
+      document.getElementById('manual-student-id').value = st.manualStudentId || '';
+      document.getElementById('browser-ua').value = st.browserUA || '';
+      if (st.speed) document.getElementById('speed').value = st.speed;
+      (st.courses || []).forEach(c => addCourseRow(c.code, c.slot));
+    } catch (_) {}
+  }
+  loadSettings();
+  // Save whenever something is typed or changed.
+  document.addEventListener('input', saveSettings);
+  document.addEventListener('change', saveSettings);
+  document.addEventListener('click', e => { if (e.target.classList && e.target.classList.contains('remove-course')) setTimeout(saveSettings, 0); });
+
   document.getElementById('clear-session-btn').addEventListener('click', async () => {
     await window.electronAPI.clearSession();
     setStatus('Saved session cleared. Next start will log in once.');
@@ -210,6 +250,7 @@ document.addEventListener('DOMContentLoaded', () => {
     blockedList.innerHTML = '';
     setStatus('Starting automation...');
 
+    saveSettings();
     const response = await window.electronAPI.startAutomation({
       creds: { r: rollNo, p: password },
       courses: courses,
@@ -229,6 +270,12 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       setStatus('Automation is running...');
     }
+  });
+
+  // Give every course fresh tries without restarting
+  retryBtn.addEventListener('click', async () => {
+    const r = await window.electronAPI.retryNow();
+    setStatus(r.success ? 'Will try again at the next free seat...' : 'Not running - press Start instead.');
   });
 
   // Stop the automation process

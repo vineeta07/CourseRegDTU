@@ -3,7 +3,7 @@
 const { app, BrowserWindow, ipcMain, session: electronSession } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { startAutomation, stopAutomation } = require('./automation');
+const { startAutomation, stopAutomation, retryNow } = require('./automation');
 
 let win;
 let automationRunning = false;
@@ -149,6 +149,8 @@ ipcMain.handle('clear-session', async () => {
   try { fs.unlinkSync(path.join(app.getPath('userData'), 'session.json')); } catch (_) {}
   return { success: true };
 });
+
+ipcMain.handle('retry-now', async () => ({ success: retryNow() }));
 
 ipcMain.handle('stop-automation', async () => {
   if (automationRunning) {

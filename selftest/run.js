@@ -88,7 +88,9 @@ const server = http.createServer((req, res) => {
         res.writeHead(302, { location: `/student/courseRegistration/${SH}` }); return res.end();
       }
       if (o.captcha === 'page' || o.captcha === 'recaptcha') { res.writeHead(302, { location: '/student/captchaPage' }); return res.end(); }
-      if (!o.refuse) sc.registered[key] = true; else sc.alert = 'Slot clash with registered course';
+      sc.refusals = (sc.refusals || 0) + 1;
+      const refuseNow = o.refuse || (o.refuseFirst && sc.refusals <= o.refuseFirst);
+      if (!refuseNow) sc.registered[key] = true; else sc.alert = 'Slot clash with registered course';
       res.writeHead(302, { location: `/student/courseRegistration/${SH}` }); return res.end();
     }
 
@@ -115,6 +117,7 @@ async function run(name, opts, runOpts, check) {
   automation = require('../automation.js');
   const out = { status: [], registered: [], blocked: [], errors: [], captchaAsks: 0, manualWindows: 0 };
   const stopTimer = setTimeout(() => automation.stopAutomation(), runOpts.maxMs || 20000);
+  const retryTimer = runOpts.retryAfterMs ? setTimeout(() => automation.retryNow(), runOpts.retryAfterMs) : null;
   await automation.startAutomation({
     credentials: {},
     courses: runOpts.courses || ['CS301:E1'],
@@ -132,6 +135,7 @@ async function run(name, opts, runOpts, check) {
     openManualWindow: async d => { out.manualWindows++; sc.registered.A = true; return d.cookies; },
   });
   clearTimeout(stopTimer);
+  if (retryTimer) clearTimeout(retryTimer);
   const posts = sc.log.filter(l => l.startsWith('POST')).length;
   const gaps = sc.times.slice(1).map((t, i) => t - sc.times[i]).filter(g => g >= 0);
   let problem = null;
@@ -176,6 +180,12 @@ server.listen(0, '127.0.0.1', async () => {
     { refuse: true }, { maxMs: 12000 }, r => {
       expect(r.posts === 1, `sent ${r.posts} register requests for the same refused course`);
       expect(r.registered.length === 0, 'claimed a refused course was registered');
+    }));
+
+  results.push(await run('"Try again now" button: retries a refused course and registers it',
+    { refuseFirst: 1 }, { retryAfterMs: 9000 }, r => {
+      expect(r.posts === 2, `expected 2 register requests (1 refused + 1 retry), got ${r.posts}`);
+      expect(r.registered.includes('CS301'), 'course was not registered after "Try again now"');
     }));
 
   results.push(await run('Captcha (separate page): asks you, wrong answer -> asks again, then registers',

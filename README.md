@@ -174,6 +174,12 @@ Or click the **`</>`** button and paste a list:
 ]
 ```
 
+### The app remembers your details
+Everything you type (cookie, Student ID, courses, speed, roll number) is **remembered on your computer**
+and filled in again next time you open the app. **Your password is never saved.**
+You only need to paste a **new cookie** when the old one stops working: the log then says
+*"Your browser session cookie has expired"*, or you logged out on the website.
+
 ### d) Checking speed
 - **Normal**: checks every 3 seconds (safer). Use most of the time.
 - **Fast**: checks every 2 seconds. Use only for the first few minutes of the registration rush.
@@ -191,11 +197,11 @@ npm run selftest
 ```
 
 This does **not** contact the real portal. It starts a **fake portal on your own computer** and runs
-the real app code against it in 19 situations: registering by itself, list order, Watch-only,
+the real app code against it in 20 situations: registering by itself, list order, Watch-only,
 refused courses, all captcha types, registration closed, wrong course code, portal warnings,
 429 errors, the Device Suspended page, an expired cookie and the speed limit.
 
-You should see `PASS` on every line and **`19/19 checks passed.`** at the end.
+You should see `PASS` on every line and **`20/20 checks passed.`** at the end.
 If any line says `FAIL`, copy the whole output and send it to the maintainer.
 
 ---
@@ -229,6 +235,10 @@ Press **Stop Automation** when you're happy.
 6. **Stay at your computer** with the volume on, in case a captcha appears.
 7. Don't keep refreshing the portal in your browser at the same time, and don't run the app on two
    computers with the same account. That doubles your requests.
+
+**If a course didn't register and you want another go:** press **Try again now** (next to Stop).
+Every course gets fresh tries at the next free seat, including ones the app paused after the portal
+refused them. Or press Stop and Start again. Each run starts fresh.
 
 **What happens next, by itself:**
 - When a seat opens, the app clicks Register about 0.25 s later.
