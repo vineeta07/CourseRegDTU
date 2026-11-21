@@ -1,7 +1,7 @@
 {
-  "name": "coureregdtu",
+  "name": "dtu-seat-monitor",
   "version": "2.0.1",
-  "description": "Course Registrar DTU",
+  "description": "DTU Seat Monitor (read-only)",
   "main": "main.js",
   "author": {
     "name": "potui",
@@ -14,13 +14,12 @@
     "dist:win": "electron-builder --win",
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux",
-    "selftest": "node selftest/run.js",
     "selftest:monitor": "node selftest/monitor.run.js",
-    "test": "npm run selftest && npm run selftest:monitor"
+    "test": "npm run selftest:monitor"
   },
   "build": {
     "appId": "com.saksham.coureregdtu",
-    "productName": "CourseRegistrar",
+    "productName": "DTUSeatMonitor",
     "directories": {
       "output": "dist"
     },
@@ -82,8 +81,6 @@
     }
   },
   "dependencies": {
-    "cheerio": "^1.0.0",
-    "got": "^14.4.5",
     "node-notifier": "^10.0.1"
   },
   "devDependencies": {
