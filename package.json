@@ -14,7 +14,9 @@
     "dist:win": "electron-builder --win",
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux",
-    "selftest": "node selftest/run.js"
+    "selftest": "node selftest/run.js",
+    "selftest:monitor": "node selftest/monitor.run.js",
+    "test": "npm run selftest && npm run selftest:monitor"
   },
   "build": {
     "appId": "com.saksham.coureregdtu",

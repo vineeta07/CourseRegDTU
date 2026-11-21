@@ -107,6 +107,26 @@
       <ul id="activity-log"></ul>
     </div>
 
+    <div class="card" id="monitor-card">
+      <h2>Seat Monitor — new portal (/register/)</h2>
+      <p class="hint">
+        Read-only watcher for the redesigned portal. It opens a browser window: <b>log in there
+        yourself</b> (solve any verification), go to Course Registration, and <b>keep that window open</b>.
+        It watches the courses below and, when one changes from <b>Full → seats available</b>, it gives a
+        <b>loud desktop alert</b>. It never clicks Add/Submit — <b>you</b> click Add in that window.
+      </p>
+      <div id="monitor-course-list">
+        <!-- monitor course rows -->
+      </div>
+      <button id="monitor-add-course" class="small-btn">Add course to monitor</button>
+      <div class="automation-controls" style="margin-top:12px;">
+        <button id="monitor-start-btn">Start Monitoring</button>
+        <button id="monitor-stop-btn" class="hidden">Stop Monitoring</button>
+      </div>
+      <div id="monitor-status"></div>
+      <ul id="monitor-state-list"><!-- live per-course status --></ul>
+    </div>
+
     <div class="card registered-courses">
       <h2>Registered Courses</h2>
       <ul id="registered-list">

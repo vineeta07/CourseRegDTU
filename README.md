@@ -276,6 +276,32 @@ The app does **not** give up on the course.
 
 ---
 
+## Seat Monitor (new /register/ portal) — read-only
+
+The redesigned portal (`/register/`) is a different site with a bot check, so the auto-registration
+part of this app does **not** work there. Instead there is a **read-only Seat Monitor** that alerts you
+the instant a full course frees up. It never clicks Add/Submit — **you** do the final click.
+
+**How it works**
+1. In the app, under **Seat Monitor**, enter the course codes to watch (defaults to HU426, HU308, HU404).
+2. Click **Start Monitoring**. A browser window opens on `/register/`.
+3. **Log in there yourself** (solve any verification), open Course Registration, and **keep that window open**.
+4. The app reads that page every few seconds (read-only). When a course changes from **Full → seats available**,
+   it plays a **loud alarm**, shows a **desktop notification**, and brings the window forward.
+5. Switch to that window and click **Add**, then **Review and submit**.
+
+**Behaviour**
+- Independent state per course; a course is tracked separately from the others.
+- No duplicate alerts: it fires once when a seat opens, and again only if the course fills and re-opens.
+- Tolerates page reloads / brief disconnects; stops itself if the page is unreadable several times in a row
+  or if you close the portal window.
+- It only observes the page you loaded and authenticated yourself — it does not bypass the bot check,
+  log in for you, or submit anything.
+
+Tested by `npm run selftest:monitor` (15 checks).
+
+---
+
 ## Safety limits
 
 These are there so your device does not get blocked ("multiple altering requests"):

@@ -15,4 +15,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onCourseBlocked: (callback) => ipcRenderer.on('course-blocked', callback),
   onError: (callback) => ipcRenderer.on('automation-error', callback),
   onStopped: (callback) => ipcRenderer.on('automation-stopped', callback),
+
+  // Read-only seat monitor (new /register/ portal)
+  startMonitor: (data) => ipcRenderer.invoke('start-monitor', data),
+  stopMonitor: () => ipcRenderer.invoke('stop-monitor'),
+  onMonitorStatus: (callback) => ipcRenderer.on('monitor-status', callback),
+  onMonitorState: (callback) => ipcRenderer.on('monitor-state', callback),
+  onMonitorAlert: (callback) => ipcRenderer.on('monitor-alert', callback),
+  onMonitorStopped: (callback) => ipcRenderer.on('monitor-stopped', callback),
 });
