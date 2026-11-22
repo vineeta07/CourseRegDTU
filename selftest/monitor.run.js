@@ -28,6 +28,11 @@ check('parseRowText: full course ("Full" + Notifying you)', () => {
   return expect(r.seats === 0 && r.full === true && r.added === false && /Language And Social Media/.test(r.name),
     `got ${JSON.stringify(r)}`);
 });
+check('parseRowText: waiting course is full and name ignores neighboring courses', () => {
+  const r = parseRowText('HU426', 'HU426Language And Social MediaWaiting for a seat10HU326Rhetoric And Public Speaking');
+  return expect(r.seats === 0 && r.full === true && r.name === 'Language And Social Media',
+    `got ${JSON.stringify(r)}`);
+});
 check('parseRowText: available course ("63 left" + Add)', () => {
   const r = parseRowText('CH314m', 'CH314mCoating and Adhesive4 credits63 left Add');
   return expect(r.seats === 63 && r.full === false && /Coating and Adhesive/.test(r.name),

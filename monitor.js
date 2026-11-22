@@ -32,11 +32,27 @@ function parseRowText(code, text) {
   var m = t.match(/(\d+)\s*left/i);
   var seats = m ? parseInt(m[1], 10) : 0;
   var added = /Added/i.test(t) || /Drop/i.test(t);
-  var full = !m && !added && (/Notif/i.test(t) || /Full/i.test(t));
+  var full = !m && !added && (/Notif/i.test(t) || /Full/i.test(t) || /Waiting\s*for\s*a?\s*seat/i.test(t) || /Waiting\s*for\s*seat/i.test(t));
   // Slot like E1/E2/E4 may be glued to the name ("ApplicationsE3"), so no leading \b.
   var slotM = t.match(/E(\d)\b/i);
   var slot = slotM ? ('E' + slotM[1]) : '';
-  var name = t
+  var namePart = t;
+  var statusMarkers = [
+    /Waiting\s*for\s*(a\s*)?seat/i,
+    /Notifying\s*you/i,
+    /Notify\s*me/i,
+    /\d+\s*left/i,
+    /\bFull\b/i,
+    /\bAdded\b/i,
+    /\bDrop\b/i
+  ];
+  var earliest = namePart.length;
+  statusMarkers.forEach(function(marker) {
+    var match = namePart.match(marker);
+    if (match && typeof match.index === 'number' && match.index < earliest) earliest = match.index;
+  });
+  namePart = namePart.substring(0, earliest);
+  var name = namePart
     .replace(code, '')
     .replace(/\d+\s*left/ig, '')
     .replace(/\d+\s*credits?/ig, '')
