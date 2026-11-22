@@ -174,6 +174,11 @@ ipcMain.handle('start-monitor', async (event, data) => {
       if (configurationGeneration !== currentGeneration) continue;
       const configured = activeEntries.find(e => e.code === a.code);
       if (!configured) continue;
+      const stillConfiguredByUI = activeEntries.some(e =>
+        e.code === a.code &&
+        (!e.slot || !a.slot || e.slot === String(a.slot).trim().toUpperCase())
+      );
+      if (!stillConfiguredByUI) continue;
       const configuredSlot = configured ? configured.slot : '';
       if (configuredSlot && String(a.slot || '').trim().toUpperCase() &&
           configuredSlot !== String(a.slot || '').trim().toUpperCase()) continue;
@@ -214,7 +219,7 @@ ipcMain.handle('start-monitor', async (event, data) => {
     monitorCheckInProgress = false;
   }, MONITOR_INTERVAL_MS);
 
-  monitorStatus('info', `Monitoring ${codes.join(', ')}. Log in inside the opened window and keep it open.`);
+  monitorStatus('info', `Allowlist active: ${codes.join(', ')}. Only these courses can be added.`);
   return { success: true };
 });
 
