@@ -85,10 +85,10 @@ check('Available -> Full -> Available fires again (re-opens)', () => {
   const a2 = m.update([{ code: 'HU404', seats: 3, full: false }]);
   return expect(a1.length === 1 && a2.length === 1, `fire1=${a1.length} fire2=${a2.length}`);
 });
-check('Available on first sighting is added immediately', () => {
+check('Available on first sighting is not added immediately', () => {
   const m = createMonitor(['CH314m']);
   const a = m.update([{ code: 'CH314m', seats: 63, full: false }]);
-  return expect(a.length === 1 && a[0].seats === 63, `got ${JSON.stringify(a)}`);
+  return expect(a.length === 0 && m.getState().CH314M.status === 'available', `got ${JSON.stringify(a)} state ${JSON.stringify(m.getState())}`);
 });
 check('Three courses are tracked independently', () => {
   const m = createMonitor(['HU426', 'HU308', 'HU404']);

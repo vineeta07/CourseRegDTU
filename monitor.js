@@ -107,9 +107,9 @@ function createMonitor(courseCodes) {
         const slot = reading.slot || prev.slot;
 
         if (status === 'available') {
-          // Add/alert for an opening whether it appeared after Full or was already
-          // available when monitoring began. De-duplicate until it becomes Full.
-          if (!prev.notified) {
+          // Do not click a course that is already available at startup. Only a
+          // full/unknown state followed by available seats represents a new opening.
+          if ((prev.status === 'full' || prev.status === 'unknown' || prev.status === 'available') && !prev.notified) {
             alerts.push({ code, name, seats, slot });
             state.set(code, { status, name, seats, slot, notified: true });
           } else {
@@ -133,7 +133,7 @@ function buildSeatObserverScript(courseCodes) {
     '(function(codes){' +
     'if(window.__dtuSeatObserverInstalled)return {installed:true};' +
     'window.__dtuSeatObserverInstalled=true;' +
-    'var clicked={};' +
+    'var clicked={},lastAvailable={},initializing=true;' +
     'function scan(){' +
     '  for(var ci=0;ci<codes.length;ci++){var code=codes[ci];' +
     '    var all=document.querySelectorAll("body *");var leaf=null;' +
@@ -149,15 +149,16 @@ function buildSeatObserverScript(courseCodes) {
     '      if(/^\\+?\\s*Add$/i.test(ct)&&bs[j].offsetParent!==null){button=bs[j];break;} } }' +
     '      if(button)break;el=el.parentElement;' +
     '    }' +
-    '    if(!button){delete clicked[code];continue;}' +
-    '    if(clicked[code])continue;' +
+    '    if(!button){delete clicked[code];lastAvailable[code]=false;continue;}' +
+    '    var wasAvailable=!!lastAvailable[code];lastAvailable[code]=true;' +
+    '    if(initializing||wasAvailable||clicked[code])continue;' +
     '    clicked[code]=true;' +
     '    try{button.focus({preventScroll:true});button.click();}catch(e){delete clicked[code];}' +
     '  }' +
     '}' +
     'var observer=new MutationObserver(function(){scan();});' +
     'observer.observe(document.documentElement||document.body,{subtree:true,childList:true,characterData:true,attributes:true});' +
-    'scan();' +
+    'scan();initializing=false;' +
     'return {installed:true};' +
     '})(' + JSON.stringify(codes) + ')'
   );
