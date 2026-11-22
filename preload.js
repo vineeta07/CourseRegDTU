@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   startMonitor: (data) => ipcRenderer.invoke('start-monitor', data),
   stopMonitor: () => ipcRenderer.invoke('stop-monitor'),
+  updateMonitor: (data) => ipcRenderer.invoke('update-monitor', data),
   onMonitorStatus: (callback) => ipcRenderer.on('monitor-status', callback),
   onMonitorState: (callback) => ipcRenderer.on('monitor-state', callback),
   onMonitorAlert: (callback) => ipcRenderer.on('monitor-alert', callback),

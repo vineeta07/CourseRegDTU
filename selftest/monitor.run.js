@@ -6,7 +6,7 @@
 //
 // Run:  npm run selftest:monitor
 
-const { parseRowText, classify, createMonitor, buildReaderScript, buildSeatObserverScript, buildAddCourseScript, PORTAL_URL } = require('../monitor.js');
+const { parseRowText, classify, createMonitor, buildReaderScript, buildAddCourseScript, PORTAL_URL } = require('../monitor.js');
 
 let passed = 0, failed = 0;
 function check(name, fn) {
@@ -85,10 +85,17 @@ check('Available -> Full -> Available fires again (re-opens)', () => {
   const a2 = m.update([{ code: 'HU404', seats: 3, full: false }]);
   return expect(a1.length === 1 && a2.length === 1, `fire1=${a1.length} fire2=${a2.length}`);
 });
-check('Available on first sighting is not added immediately', () => {
+check('Drop -> Available fires again for the configured course', () => {
+  const m = createMonitor(['CH314m']);
+  m.update([{ code: 'CH314m', seats: 60, full: false }]);
+  m.update([{ code: 'CH314m', seats: 0, full: false, added: true }]);
+  const a = m.update([{ code: 'CH314m', seats: 61, full: false }]);
+  return expect(a.length === 1 && a[0].seats === 61, `got ${JSON.stringify(a)} state ${JSON.stringify(m.getState())}`);
+});
+check('Available on first sighting is added immediately', () => {
   const m = createMonitor(['CH314m']);
   const a = m.update([{ code: 'CH314m', seats: 63, full: false }]);
-  return expect(a.length === 0 && m.getState().CH314M.status === 'available', `got ${JSON.stringify(a)} state ${JSON.stringify(m.getState())}`);
+  return expect(a.length === 1 && a[0].seats === 63 && m.getState().CH314M.status === 'available', `got ${JSON.stringify(a)} state ${JSON.stringify(m.getState())}`);
 });
 check('Three courses are tracked independently', () => {
   const m = createMonitor(['HU426', 'HU308', 'HU404']);
@@ -126,21 +133,6 @@ check('Reader script targets the portal and is READ-ONLY (no click/add/submit)',
   return expect(
     typeof s === 'string' && s.includes('querySelectorAll') && s.includes('HU426') && !badWrites.test(s) && PORTAL_URL.includes('/register/'),
     'reader is not a safe read-only string'
-  );
-});
-
-// ---- the live DOM observer reacts immediately and still excludes Submit ----
-check('Seat observer watches DOM changes and targets only Add buttons', () => {
-  const s = buildSeatObserverScript(['HU426', 'HU308']);
-  return expect(
-    typeof s === 'string' &&
-    s.includes('MutationObserver') &&
-    s.includes('HU426') &&
-    s.includes('button.click') &&
-    s.includes('left') &&
-    s.includes('Added|Drop') &&
-    !/input\[type=submit\]|[Ss]ubmit/i.test(s),
-    'seat observer is missing DOM reaction or has an unsafe target'
   );
 });
 

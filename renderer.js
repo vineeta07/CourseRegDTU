@@ -3,10 +3,12 @@
 document.addEventListener('DOMContentLoaded', () => {
   const monitorCourseList = document.getElementById('monitor-course-list');
   const monitorAddBtn = document.getElementById('monitor-add-course');
+  const monitorClearBtn = document.getElementById('monitor-clear-courses');
   const monitorStartBtn = document.getElementById('monitor-start-btn');
   const monitorStopBtn = document.getElementById('monitor-stop-btn');
   const monitorStatus = document.getElementById('monitor-status');
   const monitorStateList = document.getElementById('monitor-state-list');
+  let monitorRunning = false;
 
   function addMonitorRow(code = '') {
     const row = document.createElement('div');
@@ -51,6 +53,10 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const raw = [...monitorCourseList.querySelectorAll('input')].map(i => i.value.trim()).filter(Boolean);
       localStorage.setItem('monitorCodes', JSON.stringify(raw));
+      if (monitorRunning && window.electronAPI && window.electronAPI.updateMonitor) {
+        const entries = getMonitorEntries();
+        window.electronAPI.updateMonitor({ entries, codes: entries.map(e => e.code) });
+      }
     } catch (_) {}
   }
 
@@ -66,11 +72,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   monitorAddBtn.addEventListener('click', () => addMonitorRow());
 
+  monitorClearBtn.addEventListener('click', async () => {
+    monitorCourseList.innerHTML = '';
+    try { localStorage.setItem('monitorCodes', '[]'); } catch (_) {}
+    if (monitorRunning) await window.electronAPI.updateMonitor({ entries: [], codes: [] });
+    addMonitorRow();
+    setMonitorStatus('All courses cleared.', 'warn');
+  });
+
   function setMonitorUI(running) {
+    monitorRunning = running;
     monitorStartBtn.classList.toggle('hidden', running);
     monitorStopBtn.classList.toggle('hidden', !running);
-    monitorAddBtn.disabled = running;
-    monitorCourseList.querySelectorAll('input, button').forEach(el => { el.disabled = running; });
   }
 
   function setMonitorStatus(message, kind = 'info') {
@@ -79,20 +92,22 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   monitorStartBtn.addEventListener('click', async () => {
-    const codes = getMonitorCodes();
+    const entries = getMonitorEntries();
+    const codes = entries.map(e => e.code);
     if (!codes.length) { setMonitorStatus('Add at least one course code first.', 'warn'); return; }
-    const r = await window.electronAPI.startMonitor({ codes });
-    if (r && r.success) { setMonitorUI(true); setMonitorStatus('Starting… a portal window is opening. Log in there and keep it open.'); }
+    const r = await window.electronAPI.startMonitor({ entries, codes });
+    if (r && r.success) { setMonitorUI(true); setMonitorStatus(`Configured ${codes.length} course(s). Starting… a portal window is opening. Log in there and keep it open.`); }
     else { setMonitorStatus((r && r.error) || 'Could not start monitoring.', 'error'); }
   });
 
   monitorStopBtn.addEventListener('click', async () => {
     await window.electronAPI.stopMonitor();
+    monitorRunning = false;
     setMonitorUI(false);
   });
 
   window.electronAPI.onMonitorStatus((event, s) => setMonitorStatus(s.message, s.type || 'info'));
-  window.electronAPI.onMonitorStopped(() => setMonitorUI(false));
+  window.electronAPI.onMonitorStopped(() => { monitorRunning = false; setMonitorUI(false); });
 
   window.electronAPI.onMonitorState((event, data) => {
     monitorStateList.innerHTML = '';
@@ -112,7 +127,7 @@ document.addEventListener('DOMContentLoaded', () => {
       monitorStateList.appendChild(li);
     });
     const checked = new Date(data.ts || Date.now()).toLocaleTimeString('en-IN');
-    setMonitorStatus(`Watching ${data.found}/${data.total} course(s) on the page. Last checked ${checked}.`,
+    setMonitorStatus(`Configured ${order.length} course(s); watching ${data.found}/${data.total} course(s) on the page. Last checked ${checked}.`,
       data.found === 0 ? 'warn' : 'info');
   });
 

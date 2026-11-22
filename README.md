@@ -38,7 +38,8 @@ https://github.com/vineeta07/CourseRegDTU/releases/latest
 - Do not leave or submit the app against the portal's terms or access rules.
 - The app does not reload the portal automatically.
 - A failed or unconfirmed Add attempt is retried automatically while the course remains available.
-- If multiple courses in the same slot open, only one course from that slot is attempted.
+- Only courses shown in the course box are eligible. Removing or clearing a course updates a running monitor immediately.
+- Slot suffixes such as `CH314m:E1` restrict that course to the matching elective slot.
 - Stop monitoring whenever the portal reports an error or verification challenge.
 
 ## Run from source
