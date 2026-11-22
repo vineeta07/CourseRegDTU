@@ -61,13 +61,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   (function loadMonitorCodes() {
-    let codes = [];
-    try { codes = JSON.parse(localStorage.getItem('monitorCodes') || 'null') || []; } catch (_) {}
-    if (codes.length) {
-      codes.forEach(c => addMonitorRow(c));
-    } else {
-      addMonitorRow();
-    }
+    // Course watchlists must be intentional for each run. Never restore an old
+    // allowlist because a stale saved EP/CH code could cause an unexpected Add.
+    try { localStorage.removeItem('monitorCodes'); } catch (_) {}
+    addMonitorRow();
   })();
 
   monitorAddBtn.addEventListener('click', () => addMonitorRow());

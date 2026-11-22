@@ -40,6 +40,7 @@ https://github.com/vineeta07/CourseRegDTU/releases/latest
 - A failed or unconfirmed Add attempt is retried automatically while the course remains available.
 - Only courses shown in the course box are eligible. Removing or clearing a course updates a running monitor immediately.
 - Slot suffixes such as `CH314m:E1` restrict that course to the matching elective slot.
+- The course box starts blank on every app launch; old saved course lists are intentionally not restored.
 - Stop monitoring whenever the portal reports an error or verification challenge.
 
 ## Run from source
