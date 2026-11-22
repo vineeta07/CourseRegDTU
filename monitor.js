@@ -125,6 +125,44 @@ function createMonitor(courseCodes) {
   };
 }
 
+// Installs an in-page MutationObserver for near-immediate reaction to portal
+// row changes. A normal 100 ms timer remains as a fallback.
+function buildSeatObserverScript(courseCodes) {
+  const codes = (courseCodes || []).map(c => String(c).trim().toUpperCase()).filter(Boolean);
+  return (
+    '(function(codes){' +
+    'if(window.__dtuSeatObserverInstalled)return {installed:true};' +
+    'window.__dtuSeatObserverInstalled=true;' +
+    'var clicked={};' +
+    'function scan(){' +
+    '  for(var ci=0;ci<codes.length;ci++){var code=codes[ci];' +
+    '    var all=document.querySelectorAll("body *");var leaf=null;' +
+    '    for(var i=0;i<all.length;i++){var n=all[i];if(n.children.length!==0)continue;' +
+    '    var tx=(n.textContent||"").replace(/\\s+/g," ").trim();' +
+    '    if(tx.toUpperCase()===code){leaf=n;break;} }' +
+    '    if(!leaf)continue;' +
+    '    var el=leaf,rowText="";var button=null;' +
+    '    for(var d=0;d<16&&el;d++){rowText=(el.textContent||"").replace(/\\s+/g," ").trim();' +
+    '      if(/\\b(Added|Drop)\\b/i.test(rowText))break;' +
+    '      if(/\\d+\\s*left/i.test(rowText)){var bs=el.querySelectorAll("button,a,[role=button],input[type=button]");' +
+    '      for(var j=0;j<bs.length;j++){var ct=(bs[j].textContent||bs[j].value||bs[j].getAttribute("aria-label")||"").replace(/\\s+/g," ").trim();' +
+    '      if(/^\\+?\\s*Add$/i.test(ct)&&bs[j].offsetParent!==null){button=bs[j];break;} } }' +
+    '      if(button)break;el=el.parentElement;' +
+    '    }' +
+    '    if(!button){delete clicked[code];continue;}' +
+    '    if(clicked[code])continue;' +
+    '    clicked[code]=true;' +
+    '    try{button.focus({preventScroll:true});button.click();}catch(e){delete clicked[code];}' +
+    '  }' +
+    '}' +
+    'var observer=new MutationObserver(function(){scan();});' +
+    'observer.observe(document.documentElement||document.body,{subtree:true,childList:true,characterData:true,attributes:true});' +
+    'scan();' +
+    'return {installed:true};' +
+    '})(' + JSON.stringify(codes) + ')'
+  );
+}
+
 // Builds the read-only script that runs INSIDE the user's authenticated portal
 // window. It finds each course row by its visible code, reads the row text, and
 // returns one reading per code. It clicks nothing and changes nothing.
@@ -181,13 +219,11 @@ function buildAddCourseScript(code, seats, name) {
     'var target=findTarget(code);' +
     'if(!target)return {success:false,found:false,buttonFound:false,changed:false};' +
     'var row=target.row,btn=target.button;' +
-    'row.scrollIntoView({behavior:"smooth",block:"center"});' +
     'var r=btn.getBoundingClientRect();' +
-    'btn.focus({preventScroll:true});' +
     'try{btn.click();}catch(e){return {success:false,found:true,buttonFound:true,changed:false,x:r.left+r.width/2,y:r.top+r.height/2,error:String(e)};}' +
     'return {success:true,found:true,buttonFound:true,changed:false,x:r.left+r.width/2,y:r.top+r.height/2};' +
     '}catch(e){return {success:false,found:false,buttonFound:false,changed:false,error:String(e)}}})(' + info + ')'
   );
 }
 
-module.exports = { PORTAL_URL, parseRowText, classify, createMonitor, buildReaderScript, buildAddCourseScript };
+module.exports = { PORTAL_URL, parseRowText, classify, createMonitor, buildReaderScript, buildSeatObserverScript, buildAddCourseScript };

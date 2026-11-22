@@ -6,7 +6,7 @@
 //
 // Run:  npm run selftest:monitor
 
-const { parseRowText, classify, createMonitor, buildReaderScript, buildAddCourseScript, PORTAL_URL } = require('../monitor.js');
+const { parseRowText, classify, createMonitor, buildReaderScript, buildSeatObserverScript, buildAddCourseScript, PORTAL_URL } = require('../monitor.js');
 
 let passed = 0, failed = 0;
 function check(name, fn) {
@@ -129,13 +129,28 @@ check('Reader script targets the portal and is READ-ONLY (no click/add/submit)',
   );
 });
 
+// ---- the live DOM observer reacts immediately and still excludes Submit ----
+check('Seat observer watches DOM changes and targets only Add buttons', () => {
+  const s = buildSeatObserverScript(['HU426', 'HU308']);
+  return expect(
+    typeof s === 'string' &&
+    s.includes('MutationObserver') &&
+    s.includes('HU426') &&
+    s.includes('button.click') &&
+    s.includes('left') &&
+    s.includes('Added|Drop') &&
+    !/input\[type=submit\]|[Ss]ubmit/i.test(s),
+    'seat observer is missing DOM reaction or has an unsafe target'
+  );
+});
+
 // ---- the action script selects and adds only the matching course ----
-check('Add script scrolls to the course, selects it, and clicks its Add control', () => {
+check('Add script directly selects and clicks the exact Add control', () => {
   const s = buildAddCourseScript('HU426', 3, 'Language And Social Media');
   return expect(
     typeof s === 'string' &&
     s.includes('HU426') &&
-    s.includes('scrollIntoView') &&
+    s.includes('btn.click') &&
     s.includes('send') === false &&
     s.includes('getBoundingClientRect') &&
     s.includes('Add') &&

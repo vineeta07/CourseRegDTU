@@ -7,9 +7,10 @@ A desktop app for the redesigned DTU course-registration portal
 
 - Opens the DTU portal in a separate Electron window.
 - Lets you add the course codes and slots you want to watch.
-- Checks the loaded portal page every 3 seconds.
+- Watches portal DOM changes and uses a 50 ms polling fallback.
 - Detects courses with 1 or more available seats.
 - Automatically attempts the matching course's visible **+ Add** button.
+- Retries an unconfirmed Add attempt and supports independent course de-duplication.
 - Sends a normal desktop notification and in-app status update.
 - Never clicks **Added**, **Drop**, or **Submit**.
 - Supports one course per slot, while other slots remain eligible.
@@ -36,7 +37,7 @@ https://github.com/vineeta07/CourseRegDTU/releases/latest
 
 - Do not leave or submit the app against the portal's terms or access rules.
 - The app does not reload the portal automatically.
-- The app makes no registration retry after an Add attempt.
+- A failed or unconfirmed Add attempt is retried automatically while the course remains available.
 - If multiple courses in the same slot open, only one course from that slot is attempted.
 - Stop monitoring whenever the portal reports an error or verification challenge.
 

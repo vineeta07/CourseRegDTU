@@ -3,7 +3,7 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const notifier = require('node-notifier');
-const { createMonitor, buildReaderScript, buildAddCourseScript, PORTAL_URL } = require('./monitor');
+const { createMonitor, buildReaderScript, buildSeatObserverScript, buildAddCourseScript, PORTAL_URL } = require('./monitor');
 
 let win;
 
@@ -13,7 +13,9 @@ let monitorTimer = null;
 let monitor = null;        // monitor.js state machine
 let monitorFails = 0;
 let attemptedSlots = new Set();
-const MONITOR_INTERVAL_MS = 3000;
+let monitorCheckInProgress = false;
+let monitorAlertedCodes = new Set();
+const MONITOR_INTERVAL_MS = 50;
 const MONITOR_MAX_FAILS = 5;
 
 // Bring the app to the front and get attention (a seat just opened).
@@ -62,6 +64,7 @@ app.on('activate', () => {
 function stopMonitor() {
   if (monitorTimer) { clearInterval(monitorTimer); monitorTimer = null; }
   monitor = null;
+  monitorCheckInProgress = false;
   return { success: true };
 }
 
@@ -78,8 +81,11 @@ ipcMain.handle('start-monitor', async (event, data) => {
   monitor = createMonitor(codes);
   monitorFails = 0;
   attemptedSlots = new Set();
+  monitorCheckInProgress = false;
+  monitorAlertedCodes = new Set();
   lastReloadAt = Date.now();
   const reader = buildReaderScript(codes);
+  const seatObserver = buildSeatObserverScript(codes);
 
   // Open a real browser window and let the USER log in and pass any security
   // check themselves. We only READ the page they loaded; we never click.
@@ -103,10 +109,12 @@ ipcMain.handle('start-monitor', async (event, data) => {
   }
 
   monitorTimer = setInterval(async () => {
-    if (!monitorWin || monitorWin.isDestroyed()) return;
+    if (monitorCheckInProgress || !monitorWin || monitorWin.isDestroyed()) return;
+    monitorCheckInProgress = true;
 
     let readings;
     try {
+      try { await monitorWin.webContents.executeJavaScript(seatObserver, true); } catch (_) {}
       readings = await monitorWin.webContents.executeJavaScript(reader, true);
       monitorFails = 0;
     } catch (e) {
@@ -118,6 +126,7 @@ ipcMain.handle('start-monitor', async (event, data) => {
         monitorStatus('error', 'Page unreadable too many times. Monitoring stopped - reload the portal and start again.');
         if (win && !win.isDestroyed()) win.webContents.send('monitor-stopped');
       }
+      monitorCheckInProgress = false;
       return;
     }
 
@@ -127,6 +136,11 @@ ipcMain.handle('start-monitor', async (event, data) => {
       win.webContents.send('monitor-state', { state: monitor.getState(), found, total: codes.length, ts: Date.now() });
     }
 
+    for (const reading of (readings || [])) {
+      if (!reading || reading.found === false) continue;
+      if (reading.full || reading.added) monitorAlertedCodes.delete(reading.code);
+    }
+
     for (const a of alerts) {
       // Try at most one open course from each slot. This allows CH310n:E4 and
       // another course in E1/E2/E3, while preventing duplicate requests for
@@ -134,35 +148,38 @@ ipcMain.handle('start-monitor', async (event, data) => {
       const slot = String(a.slot || '').trim().toUpperCase();
       if (slot && attemptedSlots.has(slot)) continue;
       if (slot) attemptedSlots.add(slot);
-      try {
-        notifier.notify({
-          title: `SEAT OPEN: ${a.code}`,
-          message: `${a.name || a.code} - ${a.seats} seat(s) left. Attempting to add; do NOT click Submit.`,
-          sound: false,
-          wait: false,
-        });
-      } catch (_) {}
-      grabAttention();
+      const firstAlert = !monitorAlertedCodes.has(a.code);
+      if (firstAlert) {
+        monitorAlertedCodes.add(a.code);
+        try {
+          notifier.notify({
+            title: `SEAT OPEN: ${a.code}`,
+            message: `${a.name || a.code} - ${a.seats} seat(s) left. Attempting to add; do NOT click Submit.`,
+            sound: false,
+            wait: false,
+          });
+        } catch (_) {}
+      }
       // Select the matching course row and click only its Add control.
+      let addSucceeded = false;
+      let buttonFound = false;
       if (monitorWin && !monitorWin.isDestroyed()) {
-        try { monitorWin.show(); monitorWin.focus(); } catch (_) {}
         let actionResult = null;
         try { actionResult = await monitorWin.webContents.executeJavaScript(buildAddCourseScript(a.code, a.seats, a.name), true); } catch (_) {}
         if (actionResult && actionResult.buttonFound) {
-          await new Promise(resolve => setTimeout(resolve, 2500));
-          try {
-            const after = await monitorWin.webContents.executeJavaScript(reader, true);
-            const confirmed = (after || []).find(r => r && r.code === a.code && r.added);
-            if (confirmed) {
-              monitorStatus('info', `${a.code} was added. Do not click the final Submit button.`);
-            } else {
-              monitorStatus('warn', `${a.code} Add click could not be confirmed. No automatic retry will be sent.`);
-            }
-          } catch (_) {}
+          buttonFound = true;
+          addSucceeded = true;
+          monitorStatus('info', `${a.code} Add request sent. Do not click the final Submit button.`);
         }
       }
-      if (win && !win.isDestroyed()) win.webContents.send('monitor-alert', a);
+      if (!addSucceeded) {
+        if (slot) attemptedSlots.delete(slot);
+        if (monitor) monitor.resetCode(a.code);
+        if (!buttonFound) monitorStatus('warn', `${a.code} Add button not found yet. Retrying automatically.`);
+      }
+      if (firstAlert && win && !win.isDestroyed()) win.webContents.send('monitor-alert', a);
     }
+    monitorCheckInProgress = false;
   }, MONITOR_INTERVAL_MS);
 
   monitorStatus('info', `Monitoring ${codes.join(', ')}. Log in inside the opened window and keep it open.`);
