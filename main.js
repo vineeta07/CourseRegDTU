@@ -3,7 +3,7 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const notifier = require('node-notifier');
-const { createMonitor, buildReaderScript, buildAddCourseScript, PORTAL_URL } = require('./monitor');
+const { createMonitor, buildReaderScript, buildSeatObserverScript, buildAddCourseScript, PORTAL_URL } = require('./monitor');
 
 let win;
 
@@ -19,7 +19,9 @@ let activeEntries = [];
 let activeCodes = [];
 let activeReader = null;
 let configurationGeneration = 0;
-const MONITOR_INTERVAL_MS = 50;
+let seatObserverActive = false;
+let currentSeatObserver = null;
+const MONITOR_INTERVAL_MS = 10;
 const MONITOR_MAX_FAILS = 5;
 
 // Bring the app to the front and get attention (a seat just opened).
@@ -73,6 +75,8 @@ function stopMonitor() {
   activeCodes = [];
   activeReader = null;
   configurationGeneration++;
+  seatObserverActive = false;
+  currentSeatObserver = null;
   return { success: true };
 }
 
@@ -96,6 +100,8 @@ ipcMain.handle('start-monitor', async (event, data) => {
   activeEntries = entries;
   activeCodes = codes;
   activeReader = buildReaderScript(codes);
+  currentSeatObserver = buildSeatObserverScript(entries);
+  seatObserverActive = false;
   configurationGeneration++;
   monitorFails = 0;
   attemptedSlots = new Set();
@@ -135,10 +141,17 @@ ipcMain.handle('start-monitor', async (event, data) => {
 
     let readings;
     try {
+      if (!seatObserverActive) {
+        try {
+          const observerResult = await monitorWin.webContents.executeJavaScript(currentSeatObserver, true);
+          seatObserverActive = !!(observerResult && observerResult.installed);
+        } catch (_) {}
+      }
       readings = await monitorWin.webContents.executeJavaScript(activeReader, true);
       monitorFails = 0;
     } catch (e) {
       // Page reloading / navigating / temporary disconnect: tolerate a few, then stop.
+      seatObserverActive = false;
       monitorFails++;
       monitorStatus('warn', `Could not read the page (reloading?) - attempt ${monitorFails}/${MONITOR_MAX_FAILS}.`);
       if (monitorFails >= MONITOR_MAX_FAILS) {
@@ -198,7 +211,7 @@ ipcMain.handle('start-monitor', async (event, data) => {
       // Select the matching course row and click only its Add control.
       let addSucceeded = false;
       let buttonFound = false;
-      if (monitorWin && !monitorWin.isDestroyed()) {
+      if (!seatObserverActive && monitorWin && !monitorWin.isDestroyed()) {
         if (configurationGeneration !== currentGeneration ||
             !activeEntries.some(e => e.code === a.code)) continue;
         let actionResult = null;
@@ -209,7 +222,7 @@ ipcMain.handle('start-monitor', async (event, data) => {
           monitorStatus('info', `${a.code} Add request sent. Do not click the final Submit button.`);
         }
       }
-      if (!addSucceeded) {
+      if (!seatObserverActive && !addSucceeded) {
         if (slot) attemptedSlots.delete(slot);
         checkMonitor.resetCode(a.code);
         if (!buttonFound) monitorStatus('warn', `${a.code} Add button not found yet. Retrying automatically.`);
@@ -247,6 +260,11 @@ ipcMain.handle('update-monitor', async (event, data) => {
   activeEntries = entries;
   activeCodes = codes;
   activeReader = buildReaderScript(codes);
+  if (monitorWin && !monitorWin.isDestroyed()) {
+    try { await monitorWin.webContents.executeJavaScript('window.__dtuExactSeatObserver=false', true); } catch (_) {}
+  }
+  currentSeatObserver = buildSeatObserverScript(entries);
+  seatObserverActive = false;
   monitor = createMonitor(codes);
   attemptedSlots = new Set();
   monitorAlertedCodes = new Set();

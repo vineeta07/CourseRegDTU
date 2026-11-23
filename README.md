@@ -7,7 +7,7 @@ A desktop app for the redesigned DTU course-registration portal
 
 - Opens the DTU portal in a separate Electron window.
 - Lets you add the course codes and slots you want to watch.
-- Watches portal DOM changes and uses a 50 ms polling fallback.
+- Watches portal DOM changes and uses a 10 ms polling fallback.
 - Detects courses with 1 or more available seats.
 - Automatically attempts the matching course's visible **+ Add** button.
 - Retries an unconfirmed Add attempt and supports independent course de-duplication.

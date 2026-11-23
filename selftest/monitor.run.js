@@ -6,7 +6,7 @@
 //
 // Run:  npm run selftest:monitor
 
-const { parseRowText, classify, createMonitor, buildReaderScript, buildAddCourseScript, PORTAL_URL } = require('../monitor.js');
+const { parseRowText, classify, createMonitor, buildReaderScript, buildSeatObserverScript, buildAddCourseScript, PORTAL_URL } = require('../monitor.js');
 
 let passed = 0, failed = 0;
 function check(name, fn) {
@@ -142,6 +142,19 @@ check('Reader script targets the portal and is READ-ONLY (no click/add/submit)',
 });
 
 // ---- the action script selects and adds only the matching course ----
+check('Seat observer reacts to DOM mutations for exact configured slots', () => {
+  const s = buildSeatObserverScript([{ code: 'HU404', slot: 'E4' }, { code: 'HU426', slot: 'E4' }]);
+  return expect(
+    typeof s === 'string' &&
+    s.includes('MutationObserver') &&
+    s.includes('HU404') &&
+    s.includes('E4') &&
+    s.includes('offsetParent') &&
+    !/Submit/i.test(s),
+    'observer does not have the exact configured-slot safety checks'
+  );
+});
+
 check('Add script directly selects and clicks the exact Add control', () => {
   const s = buildAddCourseScript('HU426', 3, 'Language And Social Media');
   return expect(

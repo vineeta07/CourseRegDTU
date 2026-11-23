@@ -79,6 +79,47 @@ function classify(reading) {
   return 'unknown';
 }
 
+// React to portal DOM mutations for the exact courses configured in the UI.
+// This runs only inside the authenticated portal window and never targets Submit.
+function buildSeatObserverScript(entries) {
+  const list = (entries || []).map(e => ({
+    code: String((e && e.code) || '').trim().toUpperCase(),
+    slot: String((e && e.slot) || '').trim().toUpperCase(),
+  })).filter(e => e.code);
+  return (
+    '(function(list){' +
+    'if(window.__dtuExactSeatObserver)return {installed:true};' +
+    'window.__dtuExactSeatObserver=true;' +
+    'var clicked={};' +
+    'function scan(){' +
+    '  for(var i=0;i<list.length;i++){var item=list[i],code=item.code,slot=item.slot;' +
+    '    var all=document.querySelectorAll("body *"),leaf=null;' +
+    '    for(var n=0;n<all.length;n++){var el=all[n];if(el.children.length!==0)continue;' +
+    '    var tx=(el.textContent||"").replace(/\\s+/g," ").trim();' +
+    '    if(tx.toUpperCase()===code){leaf=el;break;} }' +
+    '    if(!leaf){delete clicked[code];continue;}' +
+    '    var row=leaf,rowText="",button=null;' +
+    '    for(var d=0;d<16&&row;d++){rowText=(row.textContent||"").replace(/\\s+/g," ").trim();' +
+    '      if(/\\b(Added|Drop)\\b/i.test(rowText)||/\\bFull\\b/i.test(rowText)||/Waiting\\s*for\\s*(a\\s*)?seat/i.test(rowText)){delete clicked[code];break;}'+
+    '      if(slot&&rowText.toUpperCase().indexOf(slot)<0){row=row.parentElement;continue;}'+
+    '      var bs=row.querySelectorAll("button,a,[role=button],input[type=button]");' +
+    '      for(var b=0;b<bs.length;b++){var ct=(bs[b].textContent||bs[b].value||bs[b].getAttribute("aria-label")||"").replace(/\\s+/g," ").trim();' +
+    '      if(/^\\+?\\s*Add$/i.test(ct)&&bs[b].offsetParent!==null){button=bs[b];break;} }' +
+    '      if(button)break;row=row.parentElement;' +
+    '    }' +
+    '    if(!button||clicked[code])continue;' +
+    '    clicked[code]=true;' +
+    '    try{button.click();}catch(e){delete clicked[code];}' +
+    '  }' +
+    '}' +
+    'var observer=new MutationObserver(function(){scan();});' +
+    'observer.observe(document.documentElement||document.body,{subtree:true,childList:true,characterData:true,attributes:true});' +
+    'scan();' +
+    'return {installed:true};' +
+    '})(' + JSON.stringify(list) + ')'
+  );
+}
+
 // Creates an independent, de-duplicating monitor for the given course codes.
 function createMonitor(courseCodes) {
   const codes = (courseCodes || []).map(c => String(c).trim().toUpperCase()).filter(Boolean);
@@ -204,4 +245,4 @@ function buildAddCourseScript(code, seats, name) {
   );
 }
 
-module.exports = { PORTAL_URL, parseRowText, classify, createMonitor, buildReaderScript, buildAddCourseScript };
+module.exports = { PORTAL_URL, parseRowText, classify, createMonitor, buildReaderScript, buildSeatObserverScript, buildAddCourseScript };
