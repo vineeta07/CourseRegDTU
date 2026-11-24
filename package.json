@@ -1,7 +1,7 @@
 {
   "name": "dtu-seat-monitor",
-  "version": "3.1.6",
-  "description": "DTU Seat Monitor (read-only)",
+  "version": "4.0.0",
+  "description": "DTU Seat Monitor - watches chosen courses and adds them the instant a seat opens",
   "main": "main.js",
   "author": {
     "name": "potui",
@@ -9,13 +9,14 @@
   },
   "license": "MIT",
   "scripts": {
-    "start": "electron .",
+    "start": "node scripts/start.js",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win",
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux",
     "selftest:monitor": "node selftest/monitor.run.js",
-    "test": "npm run selftest:monitor"
+    "selftest:dom": "node scripts/start.js selftest/dom.electron.js",
+    "test": "npm run selftest:monitor && npm run selftest:dom"
   },
   "build": {
     "appId": "com.saksham.coureregdtu",
@@ -29,7 +30,8 @@
       "!.github/**",
       "!*.md",
       "!mermaid_diagram_*.png",
-      "!selftest/**"
+      "!selftest/**",
+      "!scripts/**"
     ],
     "artifactName": "CourseRegistrar-${version}-${os}-${arch}.${ext}",
     "win": {
@@ -79,9 +81,6 @@
       "category": "Utility",
       "maintainer": "vineeta07"
     }
-  },
-  "dependencies": {
-    "node-notifier": "^10.0.1"
   },
   "devDependencies": {
     "electron": "^34.5.8",

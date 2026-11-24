@@ -6,7 +6,7 @@
 //
 // Run:  npm run selftest:monitor
 
-const { parseRowText, classify, createMonitor, buildReaderScript, buildSeatObserverScript, buildAddCourseScript, PORTAL_URL } = require('../monitor.js');
+const { parseRowText, classify, createMonitor, buildReaderScript, buildAddCourseScript, PORTAL_URL } = require('../monitor.js');
 
 let passed = 0, failed = 0;
 function check(name, fn) {
@@ -38,6 +38,11 @@ check('parseRowText: available course ("63 left" + Add)', () => {
   return expect(r.seats === 63 && r.full === false && /Coating and Adhesive/.test(r.name),
     `got ${JSON.stringify(r)}`);
 });
+check('parseRowText: visible + Add control without left text is available', () => {
+  const r = parseRowText('CS318', 'CS318Economics of Growth and Development4 creditsE1 + Add');
+  return expect(r.seats === 1 && r.full === false && r.added === false,
+    `got ${JSON.stringify(r)}`);
+});
 check('parseRowText: added course ("Added"/"Drop") is not full, not available', () => {
   const r = parseRowText('IT322', 'IT322Computer VisionFull Added Drop');
   return expect(r.added === true && r.full === false && r.seats === 0, `got ${JSON.stringify(r)}`);
@@ -64,7 +69,7 @@ check('classify: seats>0 is available', () => expect(classify({ seats: 5, full: 
 check('classify: 1 seat is available immediately', () => expect(classify({ seats: 1, full: false }) === 'available', '1 seat was not available'));
 check('classify: Full with 0 seats is full', () => expect(classify({ seats: 0, full: true }) === 'full', 'not full'));
 check('classify: nothing known is unknown', () => expect(classify({ seats: 0, full: false }) === 'unknown', 'not unknown'));
-check('classify: already-added course is never available', () => expect(classify({ seats: 51, full: false, added: true }) === 'unknown', 'added course was available'));
+check('classify: already-added course is registered', () => expect(classify({ seats: 51, full: false, added: true }) === 'registered', 'added course was not registered'));
 
 // ---- transition + de-duplication ----
 check('Full -> Available fires exactly once', () => {
@@ -141,46 +146,16 @@ check('Reader script targets the portal and is READ-ONLY (no click/add/submit)',
   );
 });
 
-// ---- the action script selects and adds only the matching course ----
-check('Seat observer reacts to DOM mutations for exact configured slots', () => {
-  const s = buildSeatObserverScript([{ code: 'HU404', slot: 'E4' }, { code: 'HU426', slot: 'E4' }]);
-  return expect(
-    typeof s === 'string' &&
-    s.includes('MutationObserver') &&
-    s.includes('HU404') &&
-    s.includes('E4') &&
-    s.includes('offsetParent') &&
-    !/Submit/i.test(s),
-    'observer does not have the exact configured-slot safety checks'
-  );
-});
-
-check('Add script directly selects and clicks the exact Add control', () => {
-  const s = buildAddCourseScript('HU426', 3, 'Language And Social Media');
-  return expect(
-    typeof s === 'string' &&
-    s.includes('HU426') &&
-    s.includes('btn.click') &&
-    s.includes('send') === false &&
-    s.includes('getBoundingClientRect') &&
-    s.includes('Add') &&
-    s.includes('Added|Drop') &&
-    !s.includes('dispatchEvent'),
-    'add script does not select and click the course'
-  );
-});
 check('Add script never targets Submit', () => {
-  const s = buildAddCourseScript('HU308', 1, '');
+  const s = buildAddCourseScript('HU308', '', 'locate');
   return expect(
     !s.includes('input[type=submit]') &&
     !/querySelector(All)?\([^)]*[Ss]ubmit/i.test(s),
     'add script may contain an unsafe Submit target'
   );
 });
-check('Add script finds the exact "+ Add" button without matching "Added"', () => {
-  const s = buildAddCourseScript('HU308', 1, '');
-  return expect(s.includes('^\\+?\\s*Add$'), 'does not anchor the exact Add match');
-});
+// The Add script's real DOM behaviour is tested in Electron against a mock
+// portal page: run `npm run selftest:dom`.
 
 console.log(`\n${passed}/${passed + failed} checks passed.`);
 console.log(failed === 0 ? 'Monitor logic verified.\n' : 'Some monitor checks FAILED.\n');

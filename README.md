@@ -5,18 +5,18 @@ A desktop app for the redesigned DTU course-registration portal
 
 ## What it does
 
-- Opens the DTU portal in a separate Electron window.
-- Lets you add the course codes and slots you want to watch.
-- Watches portal DOM changes and uses a 10 ms polling fallback.
-- Detects courses with 1 or more available seats.
-- Automatically attempts the matching course's visible **+ Add** button.
-- Retries an unconfirmed Add attempt and supports independent course de-duplication.
-- Sends a normal desktop notification and in-app status update.
-- Never clicks **Added**, **Drop**, or **Submit**.
-- Supports one course per slot, while other slots remain eligible.
+- Opens the DTU portal in a separate Electron window; you log in there yourself.
+- Watches only the course codes you enter (optionally with a slot, e.g. `EE316N:E4`).
+- Clicks that course's own **Add** button the instant it appears (~1–2 ms), from
+  inside the page. If the portal doesn't react within 60 ms, it falls back to a
+  real mouse click, then keeps alternating every 300 ms until the row changes.
+- Shows each course's live state: seats left, Full, **ADDED ✓**, or the portal's
+  own button word if it is something unexpected.
+- Keeps working with the portal window covered, minimised, or hidden
+  (**Hide portal window** button).
+- Never clicks another course's button, **Drop**, or the final **Submit**.
 
 The app does not log in for you, solve verification, or submit the final registration.
-Keep the portal window open and complete any login or verification yourself.
 
 ## Download
 
@@ -26,21 +26,21 @@ https://github.com/vineeta07/CourseRegDTU/releases/latest
 
 ## Use
 
-1. Start the app and enter course codes in `CODE:SLOT` format, for example `HU426:E4`.
+1. Start the app and enter course codes, one per row: `EV302`, or `HU426:E4` to require a slot.
 2. Click **Start Monitoring**.
-3. Sign in in the portal window and open Course Registration.
-4. Keep the portal window open while monitoring.
-5. The app will attempt **+ Add** for eligible available courses.
-6. Review the selected courses and complete the final submit step manually.
+3. Sign in in the portal window and open the course list.
+4. Optionally click **Hide portal window**. Don't close it or navigate away from the course list.
+5. When a seat opens the app adds the course and shows **ADDED ✓**.
+6. Review your selected courses in the portal and do the final submit yourself.
 
-## Safety notes
+## Notes
 
-- Do not leave or submit the app against the portal's terms or access rules.
-- The app does not reload the portal automatically.
-- A failed or unconfirmed Add attempt is retried automatically while the course remains available.
-- Only courses shown in the course box are eligible. Removing or clearing a course updates a running monitor immediately.
-- Slot suffixes such as `CH314m:E1` restrict that course to the matching elective slot.
-- The course box starts blank on every app launch; old saved course lists are intentionally not restored.
+- To change the course list, **Stop Monitoring** first (the list is locked while running).
+- If you drop a watched course while monitoring, the app will add it straight back. Stop first.
+- Don't log in to the portal anywhere else at the same time: it may sign out the app's window.
+- Keep the PC awake and online while monitoring.
+- The app does not reload the portal or contact the server on its own; it only reacts to what the portal page shows.
+- The course box starts blank on every launch; old lists are not restored.
 - Stop monitoring whenever the portal reports an error or verification challenge.
 
 ## Run from source
@@ -55,6 +55,9 @@ npm start
 ```bash
 npm test
 ```
+
+Runs the logic tests and the Electron tests (real scripts against mock portal
+pages, including click latency and hidden-window checks).
 
 ## Build Windows downloads
 

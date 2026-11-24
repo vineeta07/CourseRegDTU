@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const monitorStatus = document.getElementById('monitor-status');
   const monitorStateList = document.getElementById('monitor-state-list');
   let monitorRunning = false;
+  monitorStateList.innerHTML = '';
 
   function addMonitorRow(code = '') {
     const row = document.createElement('div');
@@ -53,10 +54,6 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const raw = [...monitorCourseList.querySelectorAll('input')].map(i => i.value.trim()).filter(Boolean);
       localStorage.setItem('monitorCodes', JSON.stringify(raw));
-      if (monitorRunning && window.electronAPI && window.electronAPI.updateMonitor) {
-        const entries = getMonitorEntries();
-        window.electronAPI.updateMonitor({ entries, codes: entries.map(e => e.code) });
-      }
     } catch (_) {}
   }
 
@@ -72,15 +69,28 @@ document.addEventListener('DOMContentLoaded', () => {
   monitorClearBtn.addEventListener('click', async () => {
     monitorCourseList.innerHTML = '';
     try { localStorage.setItem('monitorCodes', '[]'); } catch (_) {}
-    if (monitorRunning) await window.electronAPI.updateMonitor({ entries: [], codes: [] });
+    monitorStateList.innerHTML = '';
     addMonitorRow();
     setMonitorStatus('All courses cleared.', 'warn');
+  });
+
+  const portalBtn = document.getElementById('monitor-portal-btn');
+  portalBtn.addEventListener('click', async () => {
+    const r = await window.electronAPI.togglePortal();
+    portalBtn.textContent = r && r.visible ? 'Hide portal window' : 'Show portal window';
   });
 
   function setMonitorUI(running) {
     monitorRunning = running;
     monitorStartBtn.classList.toggle('hidden', running);
     monitorStopBtn.classList.toggle('hidden', !running);
+    portalBtn.classList.toggle('hidden', !running);
+    if (!running) portalBtn.textContent = 'Hide portal window';
+    monitorAddBtn.disabled = running;
+    monitorClearBtn.disabled = running;
+    monitorCourseList.querySelectorAll('input, .remove-course').forEach(el => {
+      el.disabled = running;
+    });
   }
 
   function setMonitorStatus(message, kind = 'info') {
@@ -101,10 +111,34 @@ document.addEventListener('DOMContentLoaded', () => {
     await window.electronAPI.stopMonitor();
     monitorRunning = false;
     setMonitorUI(false);
+    monitorStateList.innerHTML = '';
+    setMonitorStatus('Monitoring stopped by you.', 'info');
   });
 
-  window.electronAPI.onMonitorStatus((event, s) => setMonitorStatus(s.message, s.type || 'info'));
-  window.electronAPI.onMonitorStopped(() => { monitorRunning = false; setMonitorUI(false); });
+  const monitorHeartbeat = document.getElementById('monitor-heartbeat');
+  const monitorLog = document.getElementById('monitor-log');
+  const LOG_KINDS = { action: 'good', good: 'good', warn: 'warn', error: 'error', info: 'info' };
+  function logEvent(s) {
+    const li = document.createElement('li');
+    li.className = `log-${LOG_KINDS[s.type] || 'info'}`;
+    const t = new Date(s.ts || Date.now());
+    li.textContent = `${t.toLocaleTimeString('en-IN')}  ${s.message}`;
+    monitorLog.prepend(li);
+    while (monitorLog.children.length > 40) monitorLog.lastChild.remove();
+  }
+
+  window.electronAPI.onMonitorStatus((event, s) => {
+    const kind = s.type === 'action' || s.type === 'good' ? 'info' : (s.type || 'info');
+    setMonitorStatus(s.message, kind);
+    logEvent(s);
+  });
+  window.electronAPI.onMonitorStopped(() => {
+    monitorRunning = false;
+    setMonitorUI(false);
+    monitorStateList.innerHTML = '';
+    monitorHeartbeat.textContent = '';
+    setMonitorStatus('Monitoring stopped.', 'info');
+  });
 
   window.electronAPI.onMonitorState((event, data) => {
     monitorStateList.innerHTML = '';
@@ -115,17 +149,22 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!s) return;
       const li = document.createElement('li');
       let label, kind;
-      if (s.status === 'available') { label = `${s.seats} seat(s) LEFT`; kind = 'good'; }
+      if (s.status === 'registered') { label = 'ADDED ✓'; kind = 'good'; }
+      else if (s.status === 'available') { label = `${s.seats} seat(s) left`; kind = 'good'; }
       else if (s.status === 'full') { label = 'Full'; kind = 'warn'; }
-      else { label = 'waiting…'; kind = 'info'; }
+      // Unclassified: show the portal's own button word so it is never a mystery.
+      else { label = s.button ? `portal shows "${s.button}"` : 'no button in row'; kind = 'info'; }
       li.className = `log-${kind}`;
       const slot = slotLabelFor(code) || s.slot || '';
       li.textContent = `${code}${slot ? ` [${slot}]` : ''}${s.name ? ' — ' + s.name : ''}: ${label}`;
       monitorStateList.appendChild(li);
     });
     const checked = new Date(data.ts || Date.now()).toLocaleTimeString('en-IN');
-    setMonitorStatus(`Configured ${order.length} course(s); watching ${data.found}/${data.total} course(s) on the page. Last checked ${checked}.`,
-      data.found === 0 ? 'warn' : 'info');
+    // Separate line, so the 150 ms heartbeat never hides add/click messages.
+    monitorHeartbeat.textContent = data.found === 0
+      ? `Course not on the page yet - open the course list in the portal. (${checked})`
+      : `Live - ${data.found}/${data.total} on page (${checked})`;
+    monitorHeartbeat.className = data.found === 0 ? 'status-warn' : 'status-info';
   });
 
   window.electronAPI.onMonitorAlert((event, a) => {

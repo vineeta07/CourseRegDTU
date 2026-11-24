@@ -469,3 +469,11 @@ select { width: 100%; padding: 8px; border-radius: 6px; }
 #activity-log .log-warn, .status-warn { color: #b45309; }
 #activity-log .log-error, .status-error { color: #dc2626; }
 #activity-log .log-good, .status-good { color: #15803d; }
+
+#monitor-heartbeat { font-size: 0.82em; margin-top: 4px; }
+#monitor-log { list-style: none; margin: 8px 0 0; padding: 8px; max-height: 200px; overflow-y: auto; font-family: ui-monospace, Consolas, monospace; font-size: 0.78em; background: #f6f7f9; border-radius: 8px; }
+#monitor-log:empty { display: none; }
+#monitor-log li { padding: 2px 0; border-bottom: 1px solid #e5e7eb; word-break: break-word; }
+#monitor-log .log-warn { color: #b45309; }
+#monitor-log .log-error { color: #dc2626; }
+#monitor-log .log-good { color: #15803d; }
