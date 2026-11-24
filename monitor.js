@@ -302,6 +302,7 @@ function locateAddInPage(code, slot, mode) {
       if (!disabled) btn.click();
       return { found: true, method: 'dom', disabled: disabled, rowText: rowText.slice(0, 160) };
     }
+    window.__dtuLastLocated = btn; // lets the watcher guard the real-mouse click
     var r = btn.getBoundingClientRect();
     var vw = window.innerWidth, vh = window.innerHeight;
     if (r.top < 0 || r.left < 0 || r.bottom > vh || r.right > vw || !r.width) {
@@ -359,9 +360,34 @@ const FAST_ADD_PREFIX = '__DTU_FAST_ADD__';
 // portal cannot silence it): {kind:'dom'|'trusted'|'added', code, n, ...}.
 function fastWatcherInPage(list, sid, gap, prefix, locate, quick) {
   if (window.__dtuFast && window.__dtuFast.obs) window.__dtuFast.obs.disconnect();
-  var st = { sid: sid, last: {}, n: {}, timers: {}, pending: false, obs: null };
+  var st = { sid: sid, last: {}, n: {}, timers: {}, pending: false, obs: null, armed: null };
   window.__dtuFast = st;
   function report(o) { o.sid = sid; console.debug(prefix + JSON.stringify(o)); }
+
+  // Click guard for the real-mouse fallback. That click is aimed at screen
+  // coordinates; if the page re-laid itself out in the few ms before it lands,
+  // it could hit something else (e.g. a Drop button). While a real click is
+  // pending, any real mouse event that is NOT on the exact Add button we aimed
+  // at is cancelled before the portal sees it.
+  function isAddEl(b) {
+    var t = String(b.textContent || b.value || b.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+    return /^\+?\s*Add$/i.test(t);
+  }
+  function guard(ev) {
+    var a = st.armed;
+    if (window.__dtuFast !== st || !a || !ev.isTrusted) return;
+    if (Date.now() > a.until) { st.armed = null; return; }
+    var onTarget = a.btn.isConnected && a.btn.contains(ev.target) && isAddEl(a.btn);
+    if (!onTarget) {
+      ev.stopImmediatePropagation(); ev.preventDefault();
+      if (ev.type === 'click') { st.armed = null; report({ kind: 'blocked', code: a.code }); }
+    } else if (ev.type === 'click') {
+      st.armed = null;
+    }
+  }
+  ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(function (t) {
+    window.addEventListener(t, guard, true);
+  });
   function later(code, ms) {
     if (st.timers[code]) return;
     st.timers[code] = setTimeout(function () { st.timers[code] = 0; scan(); }, ms);
@@ -386,6 +412,7 @@ function fastWatcherInPage(list, sid, gap, prefix, locate, quick) {
           if (!useDom) locate(code, e.slot, 'domclick'); // covered: real mouse would miss
           report({ kind: 'dom', code: code, n: n + 1 });
         } else {
+          st.armed = { btn: window.__dtuLastLocated, code: code, until: Date.now() + 250 };
           report({ kind: 'trusted', code: code, n: n + 1, x: r.x, y: r.y });
         }
         later(code, (n === 0 ? quick : gap) + 2); // re-check even if the click is silently ignored

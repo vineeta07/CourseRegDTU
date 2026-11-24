@@ -208,6 +208,64 @@ app.whenReady().then(async () => {
   ok(h.clicks.length === 1 && h.clicks[0].code === 'ME318N', 'hidden window: exactly one click, on ME318N', h);
   if (h.clicks.length) ok(h.clicks[0].at - h.openedAt < 20, `hidden window: seat-open -> DOM click ${(h.clicks[0].at - h.openedAt).toFixed(1)} ms`, h);
   ok(reports.some(r => r.kind === 'added'), 'hidden window: watcher reports added', reports);
+  win.show();
+
+  // ---- SAFETY: whole list added; unlisted course, Drop and Submit never touched ----
+  const SAFE = `<!doctype html><html><body><ul class="f-list">
+    ${slat('EV401', '0left', 'Waiting', 'One')}${slat('EV402', '0left', 'Waiting', 'Two')}
+    ${slat('EV403', '9left', 'Add', 'Not in my list')}${slat('EV404', '9left', 'Drop', 'Already mine')}
+  </ul><button id="submit">Submit</button><script>
+    window.clicks = [];
+    document.addEventListener('click', e => {
+      const b = e.target.closest('button'); if (!b) return;
+      const li = b.closest('li');
+      window.clicks.push((li ? li.querySelector('.f-code').textContent : '-') + ':' + b.textContent);
+      if (b.textContent === 'Add') { b.textContent = 'Adding'; setTimeout(() => { b.textContent = 'Drop'; }, 40); }
+    });
+    window.openAll = () => document.querySelectorAll('li').forEach(li => {
+      const c = li.querySelector('.f-code').textContent;
+      if (c === 'EV401' || c === 'EV402') { li.querySelector('.left').textContent = '3left'; li.querySelector('.f-btn').textContent = 'Add'; }
+    });
+  </script></body></html>`;
+  await wc.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(SAFE));
+  await wc.executeJavaScriptInIsolatedWorld(1717, [{ code: buildFastWatcherScript([{ code: 'EV401', slot: '' }, { code: 'EV402', slot: '' }], SID, 300, 60) }], true);
+  await run('window.openAll()');
+  await wait(1500);
+  const sc = await run('window.clicks');
+  ok(sc.filter(c => c === 'EV401:Add').length === 1 && sc.filter(c => c === 'EV402:Add').length === 1,
+    'both listed courses added, each exactly once', sc);
+  ok(!sc.some(c => /EV403|Drop|Submit/.test(c)), 'never clicked: unlisted course, Drop, Submit', sc);
+  const both = await run(buildReaderScript(['EV401', 'EV402']));
+  ok(both.every(r => classify(r) === 'registered'), 'both rows now read ADDED', both);
+
+  // ---- SAFETY: page moves a Drop button under the real-mouse click -> blocked ----
+  const RACE = `<!doctype html><html><body><ul class="f-list">${slat('EV501', '0left', 'Waiting', 'Race')}</ul><script>
+    window.drops = 0; window.adds = [];
+    document.addEventListener('click', e => {
+      const b = e.target.closest('.f-btn'); if (!b) return;
+      if (b.textContent === 'Drop') { window.drops++; return; }
+      if (b.textContent === 'Add') window.adds.push(e.isTrusted);   // ignores DOM clicks, waits for a real one
+    });
+    window.open1 = () => { const li = document.querySelector('li'); li.querySelector('.left').textContent = '2left'; li.querySelector('.f-btn').textContent = 'Add'; };
+    window.swapToDrop = () => { const b = document.querySelector('.f-btn'); const d = document.createElement('button');
+      d.className = 'f-btn'; d.textContent = 'Drop'; d.style.cssText = getComputedStyle(b).cssText; b.replaceWith(d); };
+  </script></body></html>`;
+  await wc.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(RACE));
+  const SID2 = 8, raceReports = [];
+  wc.on('console-message', async (event, level, message) => {
+    const msg = typeof message === 'string' ? message : (event && event.message) || '';
+    if (!msg.startsWith(FAST_ADD_PREFIX)) return;
+    const r = JSON.parse(msg.slice(FAST_ADD_PREFIX.length));
+    if (r.sid !== SID2) return;
+    raceReports.push(r.kind);
+    if (r.kind === 'trusted') { await run('window.swapToDrop()'); trustedClick(wc, r.x, r.y); } // worst-case race
+  });
+  await wc.executeJavaScriptInIsolatedWorld(1717, [{ code: buildFastWatcherScript([{ code: 'EV501', slot: '' }], SID2, 300, 60) }], true);
+  await run('window.open1()');
+  await wait(800);
+  const race = await run('({ drops: window.drops, adds: window.adds })');
+  ok(race.drops === 0, 'real click landing on a Drop button is blocked (Drop never fires)', { race, raceReports });
+  ok(raceReports.includes('blocked'), 'watcher reports the blocked click', raceReports);
 
   console.log(`\n${passed}/${passed + failed} DOM checks passed.`);
   app.exit(failed ? 1 : 0);

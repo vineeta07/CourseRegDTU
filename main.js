@@ -72,7 +72,9 @@ function logClick(code, n) {
 }
 
 // Fallback clicker, used by the poll only while the in-page watcher is not
-// running. Same order as the watcher: DOM click first, then a real mouse click.
+// running (e.g. right after a reload). DOM click only: it acts on the exact
+// Add element, so it can never land on a different button. Real mouse clicks
+// are only sent by the watcher, which guards them (see fastWatcherInPage).
 async function attemptAdd(code, slot) {
   const wc = liveWebContents();
   if (!wc) return;
@@ -81,9 +83,7 @@ async function attemptAdd(code, slot) {
   rec.count++; rec.lastAt = Date.now();
   addAttempts.set(code, rec);
 
-  // A minimised window has no on-screen target for a real mouse event.
-  const useTrusted = rec.count % 2 === 0 && !monitorWin.isMinimized() && monitorWin.isVisible();
-  const res = await wc.executeJavaScript(buildAddCourseScript(code, slot, useTrusted ? 'locate' : 'domclick'), true);
+  const res = await wc.executeJavaScript(buildAddCourseScript(code, slot, 'domclick'), true);
 
   if (!res || !res.found) {
     rec.lastAt = 0; rec.count--; // nothing was clicked, so retry on the next tick
@@ -95,10 +95,6 @@ async function attemptAdd(code, slot) {
     return;
   }
   if (res.disabled) return;
-  if (useTrusted) {
-    if (res.covered) await wc.executeJavaScript(buildAddCourseScript(code, slot, 'domclick'), true);
-    else trustedClick(wc, res.x, res.y);
-  }
   logClick(code, rec.count);
 }
 
@@ -140,6 +136,10 @@ function onConsoleMessage(event, level, message) {
     if (clickedCodes.delete(r.code)) monitorStatus('good', `${r.code}: ADDED ✓`);
     return;
   }
+  if (r.kind === 'blocked') {
+    monitorStatus('warn', `${r.code}: page moved during click - blocked it, retrying`);
+    return;
+  }
   if (r.kind === 'trusted') {
     if (!wc) return;
     if (monitorWin.isMinimized() || !monitorWin.isVisible()) {
@@ -163,7 +163,16 @@ function createWindow() {
     },
     icon: path.join(__dirname, 'assets', 'dtulogo.png'),
   });
-  win.loadFile('index.html');
+  win.loadFile(path.join(__dirname, 'index.html'));
+  // Closing the app window must also close the portal, even when it is hidden,
+  // or an invisible window would keep the app running.
+  // Done in 'close' (before teardown): destroying the child from the parent's
+  // 'closed' handler races Electron's own child teardown and can hang the app.
+  win.on('close', () => {
+    if (monitorTimer) stopMonitor();
+    if (monitorWin && !monitorWin.isDestroyed()) monitorWin.destroy();
+  });
+  win.on('closed', () => { win = null; });
 }
 
 function createMonitorWindow() {
@@ -199,7 +208,8 @@ function createMonitorWindow() {
       monitorStatus('warn', 'Monitor window closed - monitoring stopped.');
     }
   });
-  monitorWin.loadURL(PORTAL_URL);
+  // Test hook only (selftest/e2e.electron.js); normal runs always use the real portal.
+  monitorWin.loadURL(process.env.DTU_TEST_PORTAL_URL || PORTAL_URL);
 }
 
 // Only one copy of the app may run.
@@ -254,19 +264,19 @@ async function monitorTick() {
     }
 
     let readings;
+    const wasDown = monitorFails >= MONITOR_MAX_FAILS;
     try {
       readings = await monitorWin.webContents.executeJavaScript(activeReader, true);
       monitorFails = 0;
     } catch (e) {
-      // Page reloading / navigating / temporary disconnect: tolerate a few, then stop.
+      // Page reloading / navigating / network blip. Never give up on our own:
+      // a slow reload must not silently end monitoring. Keep retrying and say so.
       monitorFails++;
-      monitorStatus('warn', `Could not read the page (reloading?) - attempt ${monitorFails}/${MONITOR_MAX_FAILS}.`);
-      if (monitorFails >= MONITOR_MAX_FAILS) {
-        stopMonitor();
-        monitorStatus('error', 'Page unreadable too many times. Monitoring stopped - reload the portal and start again.');
-      }
+      if (monitorFails === MONITOR_MAX_FAILS) monitorStatus('warn', 'Portal is reloading or offline - still watching, will resume automatically');
+      if (win && !win.isDestroyed()) win.webContents.send('monitor-state', { state: checkMonitor.getState(), found: 0, total: activeCodes.length, ts: Date.now(), reloading: true });
       return;
     }
+    if (wasDown) monitorStatus('info', 'Portal back - watching');
     if (monitor !== checkMonitor || configurationGeneration !== currentGeneration) return;
 
     const alerts = checkMonitor.update(readings);

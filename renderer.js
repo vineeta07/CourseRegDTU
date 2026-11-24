@@ -161,7 +161,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     const checked = new Date(data.ts || Date.now()).toLocaleTimeString('en-IN');
     // Separate line, so the 150 ms heartbeat never hides add/click messages.
-    monitorHeartbeat.textContent = data.found === 0
+    monitorHeartbeat.textContent = data.reloading
+      ? `Portal reloading or offline - will resume automatically (${checked})`
+      : data.found === 0
       ? `Course not on the page yet - open the course list in the portal. (${checked})`
       : `Live - ${data.found}/${data.total} on page (${checked})`;
     monitorHeartbeat.className = data.found === 0 ? 'status-warn' : 'status-info';

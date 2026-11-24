@@ -1,6 +1,6 @@
 {
   "name": "dtu-seat-monitor",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "DTU Seat Monitor - watches chosen courses and adds them the instant a seat opens",
   "main": "main.js",
   "author": {
@@ -16,7 +16,8 @@
     "dist:linux": "electron-builder --linux",
     "selftest:monitor": "node selftest/monitor.run.js",
     "selftest:dom": "node scripts/start.js selftest/dom.electron.js",
-    "test": "npm run selftest:monitor && npm run selftest:dom"
+    "selftest:e2e": "node scripts/start.js selftest/e2e.electron.js",
+    "test": "npm run selftest:monitor && npm run selftest:dom && npm run selftest:e2e"
   },
   "build": {
     "appId": "com.saksham.coureregdtu",
