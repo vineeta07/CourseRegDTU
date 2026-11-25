@@ -88,12 +88,15 @@ app.whenReady().then(async () => {
     ok(bobCookies.length === 0, "Login 1's cookie is not visible to Login 2", bobCookies);
   }
 
-  await wait(2400); // page is broken now
+  // Wait for the state itself, not a fixed time: window load time varies.
+  const waitFor = async (expr, ms) => { for (const end = Date.now() + ms; Date.now() < end; await wait(100)) if (await ui(expr)) return true; return false; };
+  await waitFor(`/reloading/i.test(${panel(1)}.querySelector('.monitor-heartbeat').textContent)`, 6000); // page is broken now
   const during = await ui(`({ hb: ${panel(1)}.querySelector('.monitor-heartbeat').textContent, log: ${panel(1)}.querySelector('.monitor-log').textContent })`);
   ok(/reloading/i.test(during.hb), 'while the portal is broken the heartbeat says it is reloading', during);
   ok(!/stopped/i.test(during.log), 'monitoring did NOT stop itself during the outage', during.log);
 
-  await wait(2500); // page back, seat opened
+  await waitFor(`/ADDED/.test(${panel(1)}.querySelector('.monitor-log').textContent)`, 8000); // page back, seat opened
+  await wait(500); // room for any (wrong) extra click to show up
   const aliceClicks = alice ? await alice.webContents.executeJavaScript('window.clicks', true) : -1;
   const bobClicks = bob ? await bob.webContents.executeJavaScript('window.clicks', true) : -1;
   const after = await ui(`${panel(1)}.querySelector('.monitor-log').textContent`);

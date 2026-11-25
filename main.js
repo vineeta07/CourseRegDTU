@@ -251,7 +251,10 @@ function createWindow() {
 function createMonitorWindow(acc) {
   const index = [...accounts.keys()].sort((a, b) => a - b).indexOf(acc.id);
   acc.win = new BrowserWindow({
-    width: 1150, height: 880, parent: win,
+    // No `parent`: a child window is hidden whenever the app window is
+    // minimised, which would disable the real-mouse click. The app window's
+    // 'close' handler still closes every portal.
+    width: 1150, height: 880,
     // Stagger the windows so several logins do not sit exactly on top of each other.
     x: 60 + 40 * Math.max(0, index), y: 40 + 40 * Math.max(0, index),
     title: portalTitle(acc),
@@ -446,6 +449,12 @@ ipcMain.handle('start-monitor', async (event, data) => {
 
   acc.timer = setInterval(() => monitorTick(acc), MONITOR_INTERVAL_MS);
   monitorStatus(acc, 'info', `Watching ${codes.join(', ')}`);
+  // Two logins on the same course race each other for the same seat.
+  for (const other of accounts.values()) {
+    if (other === acc || !other.timer) continue;
+    const shared = codes.filter(c => other.codes.includes(c));
+    if (shared.length) monitorStatus(acc, 'warn', `${shared.join(', ')} also in ${other.label}`);
+  }
   return { success: true };
 });
 
