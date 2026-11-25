@@ -16,43 +16,45 @@
     <div class="card" id="monitor-card">
       <h2>Seat Monitor — new portal (/register/)</h2>
       <p class="hint">
-        <b>Course-seat watcher</b> for the redesigned DTU registration portal.
-        Open the portal, <b>log in yourself</b>, solve any verification, navigate to
-        <b>Course Registration</b>, and keep the portal window open.
+        Each panel below is <b>one student login</b> with its own portal window and
+        its own cookies, so logins never mix. Press <b>Start Monitoring</b>, then
+        <b>log in yourself</b> in the window that opens (its title shows the login
+        name) and go to <b>Course Registration</b>.
       </p>
       <p class="hint">
-        Add the courses you want to watch and start monitoring. The app checks
-        these courses every few seconds. If a <b>Full</b> course shows at least
-        <b>1 seat</b>, it automatically clicks that course's <b>+ Add</b> button
-        and sends a normal desktop notification to confirm that the course was selected.
+        The moment a listed course shows a seat, its <b>+ Add</b> button is clicked
+        in that login's portal. Only the courses listed for that login are touched.
+        Courses marked <b>Added</b> or <b>Drop</b> are skipped, and the final
+        <b>Submit</b> button is never clicked.
       </p>
       <p class="hint">
-        Monitoring supports one available course per slot. It skips courses already
-        marked <b>Added</b> or <b>Drop</b>. It <b>never clicks the final Submit button</b>,
-        so the final submission remains under your control.
+        Portal windows can be hidden, minimised or covered. Keep the laptop awake.
       </p>
-      <p class="hint">
-        Keep the <b>portal window open</b> and the laptop awake. Minimising or
-        switching windows is fine. If the laptop sleeps or the portal page changes,
-        monitoring will not run until it is active again.
-      </p>
-      <h3>Courses to watch</h3>
-      <div id="monitor-course-list">
-        <!-- Only rows filled by the user are added to the watch list. -->
-      </div>
-      <button id="monitor-add-course" class="small-btn" type="button">Add course</button>
-      <button id="monitor-clear-courses" class="small-btn" type="button">Clear all courses</button>
-      <div class="automation-controls" style="margin-top:12px;">
-        <button id="monitor-start-btn">Start Monitoring</button>
-        <button id="monitor-stop-btn" class="hidden">Stop Monitoring</button>
-        <button id="monitor-portal-btn" class="hidden" type="button">Hide portal window</button>
-      </div>
-      <div id="monitor-status"></div>
-      <div id="monitor-heartbeat" class="status-info"></div>
-      <ul id="monitor-log"><!-- recent add/click events, newest first --></ul>
-      <ul id="monitor-state-list"><!-- live per-course status --></ul>
+      <div id="accounts"></div>
+      <button id="add-account" class="small-btn" type="button">+ Add another student login</button>
     </div>
   </div>
+
+  <template id="account-template">
+    <div class="account-card">
+      <div class="account-head">
+        <input class="account-name" type="text" maxlength="40" aria-label="Login name">
+        <button class="small-btn remove-account" type="button">Remove this login</button>
+      </div>
+      <h3>Courses to watch</h3>
+      <div class="course-list"></div>
+      <button class="small-btn add-course" type="button">Add course</button>
+      <button class="small-btn clear-courses" type="button">Clear all courses</button>
+      <div class="automation-controls" style="margin-top:12px;">
+        <button class="start-btn" type="button">Start Monitoring</button>
+        <button class="stop-btn hidden" type="button">Stop Monitoring</button>
+      </div>
+      <div class="monitor-status"></div>
+      <div class="monitor-heartbeat status-info"></div>
+      <ul class="monitor-log"><!-- recent add/click events, newest first --></ul>
+      <ul class="monitor-state-list"><!-- live per-course status --></ul>
+    </div>
+  </template>
 
   <script src="renderer.js"></script>
 </body>

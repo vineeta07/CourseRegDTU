@@ -138,7 +138,7 @@ h2 {
   animation: fadeIn 0.4s ease-out;
 }
 
-#monitor-course-list:empty {
+.course-list:empty {
   display: none;
 }
 
@@ -470,10 +470,17 @@ select { width: 100%; padding: 8px; border-radius: 6px; }
 #activity-log .log-error, .status-error { color: #dc2626; }
 #activity-log .log-good, .status-good { color: #15803d; }
 
-#monitor-heartbeat { font-size: 0.82em; margin-top: 4px; }
-#monitor-log { list-style: none; margin: 8px 0 0; padding: 8px; max-height: 200px; overflow-y: auto; font-family: ui-monospace, Consolas, monospace; font-size: 0.78em; background: #f6f7f9; border-radius: 8px; }
-#monitor-log:empty { display: none; }
-#monitor-log li { padding: 2px 0; border-bottom: 1px solid #e5e7eb; word-break: break-word; }
-#monitor-log .log-warn { color: #b45309; }
-#monitor-log .log-error { color: #dc2626; }
-#monitor-log .log-good { color: #15803d; }
+.monitor-heartbeat { font-size: 0.82em; margin-top: 4px; }
+.monitor-log { list-style: none; margin: 8px 0 0; padding: 8px; max-height: 200px; overflow-y: auto; font-family: ui-monospace, Consolas, monospace; font-size: 0.78em; background: #f6f7f9; border-radius: 8px; }
+.monitor-log:empty { display: none; }
+.monitor-log li { padding: 2px 0; border-bottom: 1px solid #e5e7eb; word-break: break-word; }
+.monitor-log .log-warn, .monitor-state-list .log-warn { color: #b45309; }
+.monitor-log .log-error, .monitor-state-list .log-error { color: #dc2626; }
+.monitor-log .log-good, .monitor-state-list .log-good { color: #15803d; }
+
+.account-card { border: 1px solid var(--border-color); border-left: 4px solid var(--border-color); border-radius: 10px; padding: 14px 16px; margin: 14px 0; }
+.account-card.running { border-left-color: #15803d; }
+.account-head { display: flex; gap: 10px; align-items: center; }
+.account-head .account-name { flex: 1; padding: 8px 12px; font-size: 1em; font-weight: 600; border: 1px solid #ced4da; border-radius: 8px; }
+.course-list:empty { display: none; }
+#add-account { margin-top: 4px; }

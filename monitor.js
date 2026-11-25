@@ -207,7 +207,10 @@ function readRowsInPage(codes, parseRowText) {
       r.added = false; r.full = false;
       if (!(r.seats > 0)) r.seats = 1; // open, count not shown
       r.disabled = !!(bs[b].disabled || bs[b].getAttribute('aria-disabled') === 'true');
-    } else if (/Added|Adding|Drop|Remov|Enrol|Regist|Selected|Withdraw|Cancel|Leave|✓|✔/i.test(label)) {
+    } else if (/^(Adding|Processing|Loading|Please wait)/i.test(label)) {
+      // Request in flight: NOT added yet (the server may still reject it).
+      r.added = false; r.full = false; r.seats = 0; r.pending = true;
+    } else if (/Added|Drop|Remove|Withdraw|Registered|Enrolled|✓|✔/i.test(label)) {
       r.added = true; r.full = false;
     } else if (/Wait|Notif|Full|Closed|Queue/i.test(label)) {
       r.full = true; r.added = false; r.seats = 0;
@@ -319,18 +322,19 @@ function locateAddInPage(code, slot, mode) {
   }
   // Not found. Work out whether the row is already Added, and describe the
   // structure around the code so a failure on the live portal can be diagnosed.
-  var rowAdded = false, chain = [];
+  var rowAdded = false, addedWord = '', chain = [];
   var start = myCodeNodes[0] || null;
   for (var up = start, u = 0; u < 10 && up && up !== document.body; u++, up = up.parentElement) {
     var t = norm(up.textContent);
     var nAdds = addsIn(up), nOther = otherCodesIn(up).length;
-    // "Added", "Drop", "Dropping", "Adding…": already added or a request is in flight.
-    if (!rowAdded && nOther === 0 && /Added|Adding|Drop|Remov|Enrol|Regist|Selected|Withdraw|✓|✔/i.test(t)) rowAdded = true;
+    // Only a confirmed state counts. "Adding…" is still in flight and may be rejected.
+    var aw = nOther === 0 && !/Adding|Processing|Please wait/i.test(t) && t.match(/Added|Drop|Remove|Withdraw|Registered|Enrolled|✓|✔/i);
+    if (!rowAdded && aw) { rowAdded = true; addedWord = aw[0]; }
     chain.push(up.tagName.toLowerCase() + (up.className && typeof up.className === 'string' ? '.' + up.className.trim().split(/\s+/).slice(0, 2).join('.') : '') +
       '[adds=' + nAdds + ',codes=' + (nOther + 1) + ',len=' + t.length + ']');
     if (nOther > 0) break;
   }
-  return { found: false, added: rowAdded, addButtonsOnPage: addButtons.length, rejected: rejected,
+  return { found: false, added: rowAdded, addedWord: addedWord, addButtonsOnPage: addButtons.length, rejected: rejected,
     codeNodes: myCodeNodes.length, chain: chain.join(' > '),
     rowText: start ? norm((start.parentElement && start.parentElement.parentElement || start.parentElement || start).textContent).slice(0, 200) : '' };
 }
@@ -418,7 +422,7 @@ function fastWatcherInPage(list, sid, gap, prefix, locate, quick) {
         later(code, (n === 0 ? quick : gap) + 2); // re-check even if the click is silently ignored
       } else if (r && r.added && n > 0) {
         st.n[code] = 0;
-        report({ kind: 'added', code: code });
+        report({ kind: 'added', code: code, word: r.addedWord || '' });
       }
     }
   }

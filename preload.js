@@ -2,10 +2,11 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Every call / event carries an accountId (one per student login).
 contextBridge.exposeInMainWorld('electronAPI', {
   startMonitor: (data) => ipcRenderer.invoke('start-monitor', data),
-  stopMonitor: () => ipcRenderer.invoke('stop-monitor'),
-  togglePortal: () => ipcRenderer.invoke('toggle-portal'),
+  stopMonitor: (accountId) => ipcRenderer.invoke('stop-monitor', accountId),
+  removeAccount: (accountId) => ipcRenderer.invoke('remove-account', accountId),
   onMonitorStatus: (callback) => ipcRenderer.on('monitor-status', callback),
   onMonitorState: (callback) => ipcRenderer.on('monitor-state', callback),
   onMonitorAlert: (callback) => ipcRenderer.on('monitor-alert', callback),

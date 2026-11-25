@@ -1,4 +1,8 @@
 // main.js — DTU Seat Monitor. Adds configured courses; never clicks final Submit.
+//
+// Several student logins can run side by side. Each one is an "account": its
+// own portal window, its own cookie store (so logins never mix), its own
+// in-page watcher and its own course list.
 
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
@@ -15,18 +19,6 @@ if (!app) {
 
 let win;
 
-let monitorWin = null;     // the real browser window the USER logs into
-let monitorTimer = null;
-let monitor = null;        // monitor.js state machine
-let monitorFails = 0;
-let monitorCheckInProgress = false;
-let activeEntries = [];
-let activeCodes = [];
-let activeReader = null;
-let configurationGeneration = 0;
-let monitorSessionId = 0;
-let tickCount = 0;
-
 // Primary add path: the in-page watcher (DOM click inside the page the moment
 // the Add button renders). The poll below drives the UI and only clicks itself
 // when the watcher is not running (e.g. mid-reload).
@@ -38,20 +30,76 @@ const ADD_RETRY_MS = 300;
 // After the first DOM click, how long to wait for ANY reaction (Adding/Drop)
 // before firing the real-mouse fallback.
 const FIRST_FALLBACK_MS = 60;
-let watcherAlive = false;
-let clickedCodes = new Set(); // courses we clicked Add for, awaiting "Added"
-let lastClickLog = new Map(); // code -> ts, to keep the log short
 // Isolated JS world for the watcher: the portal cannot override its console
 // or globals, and it cannot see ours.
 const WATCHER_WORLD_ID = 1717;
-let addAttempts = new Map(); // code -> { count, lastAt, lastWarn }
+const MAX_ACCOUNTS = 6;
+// After a click, if the row is still not added (and not "Adding…") this long
+// later, the portal refused it: log what it shows.
+const NOT_ADDED_AFTER_MS = 3000;
+// Read-only: visible error / toast / alert text on the portal page.
+const PAGE_MESSAGES_SCRIPT = `(function(){
+  var sel='[role=alert],[role=status],[aria-live],.toast,.alert,.error,.snackbar,.notification,[class*=toast],[class*=Toast],[class*=error],[class*=alert],[class*=snack],[class*=notif],[class*=message]';
+  var out=[],els=document.querySelectorAll(sel);
+  for(var i=0;i<els.length&&out.length<3;i++){var e=els[i];if(!e.offsetParent&&getComputedStyle(e).position!=='fixed')continue;
+    var t=String(e.textContent||'').replace(/\\s+/g,' ').trim();if(t&&t.length<300&&out.indexOf(t)<0)out.push(t);}
+  return out.join(' / ').slice(0,250);})()`;
 
-function monitorStatus(type, message) {
-  if (win && !win.isDestroyed()) win.webContents.send('monitor-status', { type, message, ts: Date.now() });
+// Globally unique, so a message from one account's page can never be taken
+// for another account's.
+let nextSessionId = 0;
+
+const accounts = new Map(); // accountId -> account
+
+function newAccount(id) {
+  return {
+    id,
+    label: `Login ${id}`,
+    win: null,              // the real browser window the USER logs into
+    timer: null,
+    monitor: null,          // monitor.js state machine
+    fails: 0,
+    checkInProgress: false,
+    entries: [],
+    codes: [],
+    reader: null,
+    generation: 0,
+    sessionId: 0,
+    tickCount: 0,
+    watcherAlive: false,
+    clickedCodes: new Map(), // code -> { at, reported }: clicked Add, awaiting "Added"
+    lastClickLog: new Map(), // code -> ts, to keep the log short
+    addAttempts: new Map(),  // code -> { count, lastAt, lastWarn }
+  };
 }
 
-function liveWebContents() {
-  return monitorWin && !monitorWin.isDestroyed() ? monitorWin.webContents : null;
+function getAccount(id) {
+  const n = Number(id) || 1;
+  if (!accounts.has(n)) accounts.set(n, newAccount(n));
+  return accounts.get(n);
+}
+
+// Login 1 keeps the default cookie store (existing logins keep working).
+// Every other login gets its own persistent store: separate cookies, separate
+// session, remembered across restarts.
+function partitionFor(id) {
+  return id === 1 ? undefined : `persist:dtu-login-${id}`;
+}
+
+function send(channel, payload) {
+  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+}
+
+function monitorStatus(acc, type, message) {
+  send('monitor-status', { accountId: acc.id, type, message, ts: Date.now() });
+}
+
+function liveWebContents(acc) {
+  return acc.win && !acc.win.isDestroyed() ? acc.win.webContents : null;
+}
+
+function portalTitle(acc) {
+  return `${acc.label} - DTU portal - log in as this student and keep this window open`;
 }
 
 function trustedClick(wc, x, y) {
@@ -62,26 +110,49 @@ function trustedClick(wc, x, y) {
   wc.sendInputEvent({ type: 'mouseUp', x: px, y: py, button: 'left', clickCount: 1 });
 }
 
-function logClick(code, n) {
-  clickedCodes.add(code);
+function logClick(acc, code, n) {
   const now = Date.now();
-  if (n === 1) monitorStatus('action', `${code}: Add clicked`);
-  else if (now - (lastClickLog.get(code) || 0) > 3000) monitorStatus('action', `${code}: retrying Add (try ${n})`);
+  acc.clickedCodes.set(code, { at: now, reported: false });
+  if (n === 1) {
+    monitorStatus(acc, 'action', `${code}: Add clicked`);
+    reportButtonAfterClick(acc, code, acc.sessionId);
+  } else if (now - (acc.lastClickLog.get(code) || 0) > 3000) monitorStatus(acc, 'action', `${code}: retry ${n}`);
   else return;
-  lastClickLog.set(code, now);
+  acc.lastClickLog.set(code, now);
+}
+
+// Diagnostic: 1 s after the first click, log what the row's button says, so
+// the log shows whether the portal reacted to the click at all. Read-only.
+function reportButtonAfterClick(acc, code, sid) {
+  setTimeout(async () => {
+    const wc = liveWebContents(acc);
+    if (!wc || acc.sessionId !== sid || !acc.reader) return;
+    let readings;
+    try { readings = await wc.executeJavaScript(acc.reader, true); } catch (_) { return; }
+    const r = (readings || []).find(x => x && x.code === code);
+    if (!r || r.found === false) { monitorStatus(acc, 'info', `${code}: row not visible`); return; }
+    const b = r.button || '?';
+    let meaning;
+    if (/^\+?\s*Add$/i.test(b)) meaning = 'click ignored';
+    else if (r.pending || r.added) meaning = 'click accepted';
+    else if (r.full) meaning = 'seat taken';
+    else meaning = 'unknown state';
+    const hidden = acc.win.isMinimized() || !acc.win.isVisible();
+    monitorStatus(acc, 'info', `${code}: ${meaning} (${b})` + (hidden ? ', window hidden' : ''));
+  }, 1000);
 }
 
 // Fallback clicker, used by the poll only while the in-page watcher is not
 // running (e.g. right after a reload). DOM click only: it acts on the exact
 // Add element, so it can never land on a different button. Real mouse clicks
 // are only sent by the watcher, which guards them (see fastWatcherInPage).
-async function attemptAdd(code, slot) {
-  const wc = liveWebContents();
+async function attemptAdd(acc, code, slot) {
+  const wc = liveWebContents(acc);
   if (!wc) return;
-  const rec = addAttempts.get(code) || { count: 0, lastAt: 0, lastWarn: 0 };
+  const rec = acc.addAttempts.get(code) || { count: 0, lastAt: 0, lastWarn: 0 };
   if (Date.now() - rec.lastAt < ADD_RETRY_MS) return;
   rec.count++; rec.lastAt = Date.now();
-  addAttempts.set(code, rec);
+  acc.addAttempts.set(code, rec);
 
   const res = await wc.executeJavaScript(buildAddCourseScript(code, slot, 'domclick'), true);
 
@@ -90,66 +161,66 @@ async function attemptAdd(code, slot) {
     if (res && res.added) return;
     if (Date.now() - rec.lastWarn < 10000) return;
     rec.lastWarn = Date.now();
-    monitorStatus('warn', `${code}: seat open but Add button not found - retrying`);
-    console.log(`[${code}] Add not found`, JSON.stringify(res)); // details in the terminal only
+    monitorStatus(acc, 'warn', `${code}: Add button not found`);
+    console.log(`[${acc.label}][${code}] Add not found`, JSON.stringify(res)); // details in the terminal only
     return;
   }
   if (res.disabled) return;
-  logClick(code, rec.count);
+  logClick(acc, code, rec.count);
 }
 
-function configuredFor(code) {
-  return activeEntries.find(e => e.code === code);
+function configuredFor(acc, code) {
+  return acc.entries.find(e => e.code === code);
 }
 
-async function installFastWatcher() {
-  const wc = liveWebContents();
-  if (!wc || !monitor) return false;
+async function installFastWatcher(acc) {
+  const wc = liveWebContents(acc);
+  if (!wc || !acc.monitor) return false;
   try {
     const r = await wc.executeJavaScriptInIsolatedWorld(WATCHER_WORLD_ID,
-      [{ code: buildFastWatcherScript(activeEntries, monitorSessionId, ADD_RETRY_MS, FIRST_FALLBACK_MS) }], true);
-    watcherAlive = !!(r && r.installed);
-  } catch (_) { watcherAlive = false; }
-  return watcherAlive;
+      [{ code: buildFastWatcherScript(acc.entries, acc.sessionId, ADD_RETRY_MS, FIRST_FALLBACK_MS) }], true);
+    acc.watcherAlive = !!(r && r.installed);
+  } catch (_) { acc.watcherAlive = false; }
+  return acc.watcherAlive;
 }
 
-async function fastWatcherAlive() {
-  const wc = liveWebContents();
+async function fastWatcherAlive(acc) {
+  const wc = liveWebContents(acc);
   if (!wc) return false;
   try {
     return !!(await wc.executeJavaScriptInIsolatedWorld(WATCHER_WORLD_ID,
-      [{ code: '!!(window.__dtuFast&&window.__dtuFast.sid===' + monitorSessionId + ')' }], true));
+      [{ code: '!!(window.__dtuFast&&window.__dtuFast.sid===' + acc.sessionId + ')' }], true));
   } catch (_) { return false; }
 }
 
-function onConsoleMessage(event, level, message) {
+function onConsoleMessage(acc, event, level, message) {
   // Electron <=34 passes (event, level, message, ...); newer versions put it on event.
   const msg = typeof message === 'string' ? message : (event && event.message) || '';
-  if (!msg.startsWith(FAST_ADD_PREFIX) || !monitor) return;
+  if (!msg.startsWith(FAST_ADD_PREFIX) || !acc.monitor) return;
   let r;
   try { r = JSON.parse(msg.slice(FAST_ADD_PREFIX.length)); } catch (_) { return; }
-  if (!r || r.sid !== monitorSessionId) return;
-  const configured = configuredFor(r.code);
-  if (!configured) return; // allowlist: only courses the user entered
-  const wc = liveWebContents();
+  if (!r || r.sid !== acc.sessionId) return;
+  const configured = configuredFor(acc, r.code);
+  if (!configured) return; // allowlist: only courses the user entered for THIS login
+  const wc = liveWebContents(acc);
   if (r.kind === 'added') {
-    if (clickedCodes.delete(r.code)) monitorStatus('good', `${r.code}: ADDED ✓`);
+    if (acc.clickedCodes.delete(r.code)) monitorStatus(acc, 'good', `${r.code}: ADDED ✓`);
     return;
   }
   if (r.kind === 'blocked') {
-    monitorStatus('warn', `${r.code}: page moved during click - blocked it, retrying`);
+    monitorStatus(acc, 'warn', `${r.code}: click blocked, retrying`);
     return;
   }
   if (r.kind === 'trusted') {
     if (!wc) return;
-    if (monitorWin.isMinimized() || !monitorWin.isVisible()) {
+    if (acc.win.isMinimized() || !acc.win.isVisible()) {
       // No on-screen target for a real mouse event: DOM click instead.
       wc.executeJavaScript(buildAddCourseScript(configured.code, configured.slot, 'domclick'), true).catch(() => {});
     } else {
       trustedClick(wc, r.x, r.y);
     }
   }
-  logClick(r.code, r.n); // 'dom': the watcher already clicked inside the page
+  logClick(acc, r.code, r.n); // 'dom': the watcher already clicked inside the page
 }
 
 function createWindow() {
@@ -164,52 +235,61 @@ function createWindow() {
     icon: path.join(__dirname, 'assets', 'dtulogo.png'),
   });
   win.loadFile(path.join(__dirname, 'index.html'));
-  // Closing the app window must also close the portal, even when it is hidden,
+  // Closing the app window must also close every portal, even hidden ones,
   // or an invisible window would keep the app running.
   // Done in 'close' (before teardown): destroying the child from the parent's
   // 'closed' handler races Electron's own child teardown and can hang the app.
   win.on('close', () => {
-    if (monitorTimer) stopMonitor();
-    if (monitorWin && !monitorWin.isDestroyed()) monitorWin.destroy();
+    for (const acc of accounts.values()) {
+      if (acc.timer) stopMonitor(acc);
+      if (acc.win && !acc.win.isDestroyed()) acc.win.destroy();
+    }
   });
   win.on('closed', () => { win = null; });
 }
 
-function createMonitorWindow() {
-  monitorWin = new BrowserWindow({
+function createMonitorWindow(acc) {
+  const index = [...accounts.keys()].sort((a, b) => a - b).indexOf(acc.id);
+  acc.win = new BrowserWindow({
     width: 1150, height: 880, parent: win,
-    title: 'DTU Seat Monitor - log in here and KEEP THIS WINDOW OPEN',
+    // Stagger the windows so several logins do not sit exactly on top of each other.
+    x: 60 + 40 * Math.max(0, index), y: 40 + 40 * Math.max(0, index),
+    title: portalTitle(acc),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      partition: partitionFor(acc.id),
       // Keep timers, rendering and the watcher at full speed even when this
       // window is behind the app window.
       backgroundThrottling: false,
     },
   });
-  const wc = monitorWin.webContents;
-  wc.on('console-message', onConsoleMessage);
+  const portal = acc.win;
+  const wc = portal.webContents;
+  // Keep our title, so it is always clear which student this window belongs to.
+  portal.on('page-title-updated', e => { e.preventDefault(); portal.setTitle(portalTitle(acc)); });
+  wc.on('console-message', (...args) => onConsoleMessage(acc, ...args));
   // A full reload wipes the watcher; put it back as soon as the DOM exists.
   wc.on('did-start-navigation', (e, url, isInPlace, isMainFrame) => {
     // Only a full main-frame navigation wipes the watcher. Iframe and in-page
     // (SPA) navigations must not, or the poll would click alongside it.
     const mainFrame = e && typeof e.isMainFrame === 'boolean' ? e.isMainFrame : isMainFrame === true;
     const sameDoc = e && typeof e.isSameDocument === 'boolean' ? e.isSameDocument : isInPlace === true;
-    if (mainFrame && !sameDoc) watcherAlive = false;
+    if (mainFrame && !sameDoc) acc.watcherAlive = false;
   });
   wc.on('dom-ready', () => {
     wc.executeJavaScript(KEEP_VISIBLE_SCRIPT, true).catch(() => {});
-    if (monitor) installFastWatcher();
+    if (acc.monitor) installFastWatcher(acc);
   });
-  monitorWin.on('closed', () => {
-    monitorWin = null;
-    if (monitorTimer) {
-      stopMonitor();
-      monitorStatus('warn', 'Monitor window closed - monitoring stopped.');
+  portal.on('closed', () => {
+    if (acc.win === portal) acc.win = null;
+    if (acc.timer) {
+      stopMonitor(acc);
+      monitorStatus(acc, 'warn', 'Portal closed - stopped');
     }
   });
   // Test hook only (selftest/e2e.electron.js); normal runs always use the real portal.
-  monitorWin.loadURL(process.env.DTU_TEST_PORTAL_URL || PORTAL_URL);
+  portal.loadURL(process.env.DTU_TEST_PORTAL_URL || PORTAL_URL);
 }
 
 // Only one copy of the app may run.
@@ -230,145 +310,160 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
-function stopMonitor() {
-  if (monitorTimer) { clearInterval(monitorTimer); monitorTimer = null; }
-  monitorSessionId++;
-  const wc = liveWebContents();
+function stopMonitor(acc) {
+  if (acc.timer) { clearInterval(acc.timer); acc.timer = null; }
+  acc.sessionId = ++nextSessionId; // invalidates any message still in flight
+  const wc = liveWebContents(acc);
   if (wc) wc.executeJavaScriptInIsolatedWorld(WATCHER_WORLD_ID, [{ code: STOP_FAST_WATCHER_SCRIPT }]).catch(() => {});
-  if (wc && !monitorWin.isVisible()) monitorWin.show(); // never leave it stranded hidden
-  monitor = null;
-  monitorCheckInProgress = false;
-  activeEntries = [];
-  activeCodes = [];
-  activeReader = null;
-  configurationGeneration++;
-  addAttempts = new Map();
-  clickedCodes = new Set();
-  lastClickLog = new Map();
-  watcherAlive = false;
-  if (win && !win.isDestroyed()) win.webContents.send('monitor-stopped');
+  if (wc && !acc.win.isVisible()) acc.win.show(); // never leave it stranded hidden
+  acc.monitor = null;
+  acc.checkInProgress = false;
+  acc.entries = [];
+  acc.codes = [];
+  acc.reader = null;
+  acc.generation++;
+  acc.addAttempts = new Map();
+  acc.clickedCodes = new Map();
+  acc.lastClickLog = new Map();
+  acc.watcherAlive = false;
+  send('monitor-stopped', { accountId: acc.id });
   return { success: true };
 }
 
-async function monitorTick() {
-  if (monitorCheckInProgress || !liveWebContents()) return;
-  const checkMonitor = monitor;
-  if (!checkMonitor || !activeReader) return;
-  monitorCheckInProgress = true;
-  const currentGeneration = configurationGeneration;
+async function monitorTick(acc) {
+  if (acc.checkInProgress || !liveWebContents(acc)) return;
+  const checkMonitor = acc.monitor;
+  if (!checkMonitor || !acc.reader) return;
+  acc.checkInProgress = true;
+  const currentGeneration = acc.generation;
   try {
     // Every ~1.5 s make sure the fast watcher is still installed.
-    if (tickCount++ % 10 === 0) {
-      watcherAlive = await fastWatcherAlive();
-      if (!watcherAlive) await installFastWatcher();
+    if (acc.tickCount++ % 10 === 0) {
+      acc.watcherAlive = await fastWatcherAlive(acc);
+      if (!acc.watcherAlive) await installFastWatcher(acc);
     }
 
     let readings;
-    const wasDown = monitorFails >= MONITOR_MAX_FAILS;
+    const wasDown = acc.fails >= MONITOR_MAX_FAILS;
     try {
-      readings = await monitorWin.webContents.executeJavaScript(activeReader, true);
-      monitorFails = 0;
+      readings = await acc.win.webContents.executeJavaScript(acc.reader, true);
+      acc.fails = 0;
     } catch (e) {
       // Page reloading / navigating / network blip. Never give up on our own:
       // a slow reload must not silently end monitoring. Keep retrying and say so.
-      monitorFails++;
-      if (monitorFails === MONITOR_MAX_FAILS) monitorStatus('warn', 'Portal is reloading or offline - still watching, will resume automatically');
-      if (win && !win.isDestroyed()) win.webContents.send('monitor-state', { state: checkMonitor.getState(), found: 0, total: activeCodes.length, ts: Date.now(), reloading: true });
+      acc.fails++;
+      if (acc.fails === MONITOR_MAX_FAILS) monitorStatus(acc, 'warn', 'Portal reloading - waiting');
+      send('monitor-state', { accountId: acc.id, state: checkMonitor.getState(), found: 0, total: acc.codes.length, ts: Date.now(), reloading: true });
       return;
     }
-    if (wasDown) monitorStatus('info', 'Portal back - watching');
-    if (monitor !== checkMonitor || configurationGeneration !== currentGeneration) return;
+    if (wasDown) monitorStatus(acc, 'info', 'Portal back');
+    if (acc.monitor !== checkMonitor || acc.generation !== currentGeneration) return;
 
     const alerts = checkMonitor.update(readings);
     const found = (readings || []).filter(r => r && r.found).length;
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('monitor-state', { state: checkMonitor.getState(), found, total: activeCodes.length, ts: Date.now() });
-    }
-    for (const a of alerts) monitorStatus('info', `${a.code}: seat open (${a.seats} left)`);
+    send('monitor-state', { accountId: acc.id, state: checkMonitor.getState(), found, total: acc.codes.length, ts: Date.now() });
+    for (const a of alerts) monitorStatus(acc, 'info', `${a.code}: ${a.seats} seat open`);
 
     for (const reading of (readings || [])) {
-      if (configurationGeneration !== currentGeneration) break;
+      if (acc.generation !== currentGeneration) break;
       if (!reading || reading.found === false) continue;
       if (classify(reading) !== 'available') {
-        if (reading.added && clickedCodes.delete(reading.code)) monitorStatus('good', `${reading.code}: ADDED ✓`);
-        if (reading.added) addAttempts.delete(reading.code);
+        // Clicked, but a few seconds later the row is neither added nor in
+        // flight: the portal refused it. Say what the row and page show.
+        const click = acc.clickedCodes.get(reading.code);
+        const waited = click ? Date.now() - click.at : 0;
+        if (click && !click.reported && !reading.added && (reading.pending ? waited > 15000 : waited > NOT_ADDED_AFTER_MS)) {
+          click.reported = true;
+          let msg = '';
+          try { msg = await acc.win.webContents.executeJavaScript(PAGE_MESSAGES_SCRIPT, true); } catch (_) {}
+          monitorStatus(acc, 'warn', `${reading.code}: NOT added (${reading.button || '?'})` + (msg ? ` - ${msg}` : ''));
+        }
+        if (reading.added && acc.clickedCodes.delete(reading.code)) monitorStatus(acc, 'good', `${reading.code}: ADDED ✓`);
+        if (reading.added) acc.addAttempts.delete(reading.code);
         if (reading.full || reading.added) checkMonitor.resetCode(reading.code);
         continue;
       }
       // The watcher already clicks within ~1 ms of the button appearing; the
       // poll only clicks when the watcher is missing (page mid-reload).
-      if (watcherAlive) continue;
-      const configured = configuredFor(reading.code);
+      if (acc.watcherAlive) continue;
+      const configured = configuredFor(acc, reading.code);
       if (!configured) continue;
       const readSlot = String(reading.slot || '').trim().toUpperCase();
       if (configured.slot && readSlot && configured.slot !== readSlot) continue;
-      if (!liveWebContents()) break;
+      if (!liveWebContents(acc)) break;
       try {
-        await attemptAdd(configured.code, configured.slot);
+        await attemptAdd(acc, configured.code, configured.slot);
       } catch (e) {
-        monitorStatus('warn', `${reading.code}: add attempt failed: ${e && e.message}`);
+        monitorStatus(acc, 'warn', `${reading.code}: add error: ${e && e.message}`);
       }
     }
   } finally {
-    monitorCheckInProgress = false;
+    acc.checkInProgress = false;
   }
 }
 
 ipcMain.handle('start-monitor', async (event, data) => {
+  const id = Number(data && data.accountId) || 1;
+  if (!accounts.has(id) && accounts.size >= MAX_ACCOUNTS) {
+    return { success: false, error: `At most ${MAX_ACCOUNTS} logins at once.` };
+  }
+  const acc = getAccount(id);
+  const label = String((data && data.label) || '').trim().slice(0, 40);
+  if (label) acc.label = label;
+
   const entries = ((data && data.entries) || []).map(e => ({
     code: String((e && e.code) || '').trim().toUpperCase(),
     slot: String((e && e.slot) || '').trim().toUpperCase(),
   })).filter((e, index, all) => e.code && all.findIndex(x => x.code === e.code) === index);
   const codes = entries.map(e => e.code);
   if (codes.length === 0) return { success: false, error: 'Add at least one course code to monitor.' };
-  if (monitorTimer) return { success: false, error: 'Monitor is already running.' };
+  if (acc.timer) return { success: false, error: 'This login is already being monitored.' };
 
-  monitor = createMonitor(codes);
-  monitorSessionId++;
-  configurationGeneration++;
-  activeEntries = entries;
-  activeCodes = codes;
-  activeReader = buildReaderScript(codes);
-  monitorFails = 0;
-  monitorCheckInProgress = false;
-  addAttempts = new Map();
-  clickedCodes = new Set();
-  lastClickLog = new Map();
-  watcherAlive = false;
-  tickCount = 0;
+  acc.monitor = createMonitor(codes);
+  acc.sessionId = ++nextSessionId;
+  acc.generation++;
+  acc.entries = entries;
+  acc.codes = codes;
+  acc.reader = buildReaderScript(codes);
+  acc.fails = 0;
+  acc.checkInProgress = false;
+  acc.addAttempts = new Map();
+  acc.clickedCodes = new Map();
+  acc.lastClickLog = new Map();
+  acc.watcherAlive = false;
+  acc.tickCount = 0;
 
   // Open a real browser window and let the USER log in and pass any security
   // check themselves.
-  if (!monitorWin || monitorWin.isDestroyed()) {
-    createMonitorWindow();
+  if (!liveWebContents(acc)) {
+    createMonitorWindow(acc);
   } else {
-    monitorWin.show();
-    monitorWin.focus();
-    installFastWatcher();
+    acc.win.setTitle(portalTitle(acc));
+    acc.win.show();
+    acc.win.focus();
+    installFastWatcher(acc);
   }
 
-  monitorTimer = setInterval(monitorTick, MONITOR_INTERVAL_MS);
-  monitorStatus('info', `Watching ${codes.join(', ')}`);
+  acc.timer = setInterval(() => monitorTick(acc), MONITOR_INTERVAL_MS);
+  monitorStatus(acc, 'info', `Watching ${codes.join(', ')}`);
   return { success: true };
 });
 
-// Hide / show the portal window. Hidden, it keeps running at full speed and
-// the in-page DOM click still fires instantly; only the real-mouse fallback is
-// skipped (DOM click is used instead).
-ipcMain.handle('toggle-portal', async () => {
-  if (!monitorWin || monitorWin.isDestroyed()) return { open: false, visible: false };
-  if (monitorWin.isVisible() && !monitorWin.isMinimized()) {
-    monitorWin.hide();
-    monitorStatus('info', 'Portal hidden - still watching and adding');
-  } else {
-    if (monitorWin.isMinimized()) monitorWin.restore();
-    monitorWin.show();
-  }
-  return { open: true, visible: monitorWin.isVisible() };
+ipcMain.handle('stop-monitor', async (event, accountId) => {
+  const acc = accounts.get(Number(accountId) || 1);
+  if (!acc) return { success: true };
+  stopMonitor(acc);
+  monitorStatus(acc, 'info', 'Stopped');
+  return { success: true };
 });
 
-ipcMain.handle('stop-monitor', async () => {
-  stopMonitor();
-  monitorStatus('info', 'Monitoring stopped by you.');
+// Removing a login from the app: stop it and close its portal window.
+// Its saved cookies stay, so adding it back later keeps the login.
+ipcMain.handle('remove-account', async (event, accountId) => {
+  const acc = accounts.get(Number(accountId));
+  if (!acc) return { success: true };
+  if (acc.timer) stopMonitor(acc);
+  if (acc.win && !acc.win.isDestroyed()) acc.win.destroy();
+  accounts.delete(acc.id);
   return { success: true };
 });

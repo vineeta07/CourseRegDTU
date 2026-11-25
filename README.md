@@ -12,8 +12,8 @@ A desktop app for the redesigned DTU course-registration portal
   real mouse click, then keeps alternating every 300 ms until the row changes.
 - Shows each course's live state: seats left, Full, **ADDED ✓**, or the portal's
   own button word if it is something unexpected.
-- Keeps working with the portal window covered, minimised, or hidden
-  (**Hide portal window** button).
+- Keeps working with the portal window covered by other windows. Don't minimise it:
+  the real-mouse fallback click needs it on screen.
 - Never clicks another course's button, **Drop**, or the final **Submit**.
 
 The app does not log in for you, solve verification, or submit the final registration.
@@ -29,9 +29,8 @@ https://github.com/vineeta07/CourseRegDTU/releases/latest
 1. Start the app and enter course codes, one per row: `EV302`, or `HU426:E4` to require a slot.
 2. Click **Start Monitoring**.
 3. Sign in in the portal window and open the course list.
-4. Optionally click **Hide portal window**. Don't close it or navigate away from the course list.
+4. Keep the portal window open (other windows on top are fine). Don't minimise or close it, or navigate away from the course list.
 5. When a seat opens the app adds the course and shows **ADDED ✓**.
-6. Review your selected courses in the portal and do the final submit yourself.
 
 ## Notes
 
