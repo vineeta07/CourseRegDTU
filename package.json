@@ -1,6 +1,6 @@
 {
   "name": "dtu-seat-monitor",
-  "version": "4.1.1",
+  "version": "4.2.0",
   "description": "DTU Seat Monitor - watches chosen courses and adds them the instant a seat opens",
   "main": "main.js",
   "author": {
