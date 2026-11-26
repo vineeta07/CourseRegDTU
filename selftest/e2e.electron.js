@@ -15,14 +15,15 @@
 
 const { app, BrowserWindow } = require('electron');
 
-const PORTAL = `<!doctype html><html><body><ul class="f-list">
-  <li class="f-slat"><div class="f-meta"><span class="f-code">EV302</span><span>4 credits</span><span class="left">0left</span></div>
-  <span class="f-name">Power Electronics</span><button class="f-btn">Waiting</button></li></ul>
+const PORTAL = `<!doctype html><html><body><table><tbody>
+  <tr><td>Power Electronics</td><td>EV302</td><td>4</td><td>E4</td><td class="left">0</td>
+  <td><button class="f-btn" disabled>Register</button></td><td><button class="drop">Drop</button></td></tr></tbody></table>
 <script>
-  window.clicks = 0;
+  window.clicks = 0; window.drops = 0;
   document.addEventListener('click', e => {
-    const b = e.target.closest('.f-btn'); if (!b || b.textContent !== 'Add') return;
-    window.clicks++; b.textContent = 'Adding'; setTimeout(() => { b.textContent = 'Drop'; }, 50);
+    if (e.target.closest('.drop')) { window.drops++; return; }
+    const b = e.target.closest('.f-btn'); if (!b || b.textContent !== 'Register' || b.disabled) return;
+    window.clicks++; b.textContent = 'Registering...'; setTimeout(() => { b.textContent = 'Registered'; b.disabled = true; }, 50);
   });
   // ~1.5 s after load: page "breaks" (no <body>, every read throws) for 2 s,
   // then comes back with a seat open.
@@ -30,7 +31,7 @@ const PORTAL = `<!doctype html><html><body><ul class="f-list">
     const body = document.body; document.documentElement.removeChild(body);
     setTimeout(() => {
       document.documentElement.appendChild(body);
-      body.querySelector('.left').textContent = '5left'; body.querySelector('.f-btn').textContent = 'Add';
+      body.querySelector('.left').textContent = '5'; body.querySelector('.f-btn').disabled = false;
     }, 2000);
   }, 1500);
 </script></body></html>`;
@@ -103,6 +104,8 @@ app.whenReady().then(async () => {
   const bobLog = await ui(`${panel(2)}.querySelector('.monitor-log').textContent`);
   ok(aliceClicks === 1, 'after recovery Login 1 clicks its course exactly once', aliceClicks);
   ok(bobClicks === 0, 'Login 2 clicks nothing (EV302 is not on its list)', bobClicks);
+  const drops = (alice ? await alice.webContents.executeJavaScript('window.drops', true) : 0) + (bob ? await bob.webContents.executeJavaScript('window.drops', true) : 0);
+  ok(drops === 0, 'Drop never clicked in either login', drops);
   ok(/ADDED ✓/.test(after), "Login 1's log shows ADDED ✓", after);
   ok(!/ADDED/.test(bobLog), "Login 1's add does not show up in Login 2's log", bobLog);
   ok(/Portal back/.test(after), 'app log shows the portal came back', after);

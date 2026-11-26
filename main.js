@@ -1,4 +1,4 @@
-// main.js — DTU Seat Monitor. Adds configured courses; never clicks final Submit.
+// main.js — DTU Seat Monitor. Registers configured courses; never clicks Drop.
 //
 // Several student logins can run side by side. Each one is an "account": its
 // own portal window, its own cookie store (so logins never mix), its own
@@ -8,7 +8,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const {
   createMonitor, buildReaderScript, buildAddCourseScript, buildFastWatcherScript,
-  classify, PORTAL_URL, FAST_ADD_PREFIX, STOP_FAST_WATCHER_SCRIPT, KEEP_VISIBLE_SCRIPT,
+  classify, PORTAL_URL, FAST_ADD_PREFIX, STOP_FAST_WATCHER_SCRIPT, KEEP_VISIBLE_SCRIPT, MAX_CLICKS_PER_OPENING,
 } = require('./monitor');
 
 if (!app) {
@@ -20,21 +20,21 @@ if (!app) {
 let win;
 
 // Primary add path: the in-page watcher (DOM click inside the page the moment
-// the Add button renders). The poll below drives the UI and only clicks itself
+// the Register button is enabled). The poll below drives the UI and only clicks itself
 // when the watcher is not running (e.g. mid-reload).
 const MONITOR_INTERVAL_MS = 150;
 const MONITOR_MAX_FAILS = 5;
-// If a course still shows "+ Add" this long after a click, the click was
+// If a course still shows an enabled "Register" this long after a click, it was
 // ignored: click again, alternating DOM click <-> real mouse click.
 const ADD_RETRY_MS = 300;
-// After the first DOM click, how long to wait for ANY reaction (Adding/Drop)
+// After the first DOM click, how long to wait for ANY reaction
 // before firing the real-mouse fallback.
 const FIRST_FALLBACK_MS = 60;
 // Isolated JS world for the watcher: the portal cannot override its console
 // or globals, and it cannot see ours.
 const WATCHER_WORLD_ID = 1717;
 const MAX_ACCOUNTS = 6;
-// After a click, if the row is still not added (and not "Adding…") this long
+// After a click, if the row is still not registered (and not in progress) this long
 // later, the portal refused it: log what it shows.
 const NOT_ADDED_AFTER_MS = 3000;
 // Read-only: visible error / toast / alert text on the portal page.
@@ -67,7 +67,7 @@ function newAccount(id) {
     sessionId: 0,
     tickCount: 0,
     watcherAlive: false,
-    clickedCodes: new Map(), // code -> { at, reported }: clicked Add, awaiting "Added"
+    clickedCodes: new Map(), // code -> { at, reported }: clicked Register, awaiting "Registered"
     lastClickLog: new Map(), // code -> ts, to keep the log short
     addAttempts: new Map(),  // code -> { count, lastAt, lastWarn }
   };
@@ -114,7 +114,7 @@ function logClick(acc, code, n) {
   const now = Date.now();
   acc.clickedCodes.set(code, { at: now, reported: false });
   if (n === 1) {
-    monitorStatus(acc, 'action', `${code}: Add clicked`);
+    monitorStatus(acc, 'action', `${code}: Register clicked`);
     reportButtonAfterClick(acc, code, acc.sessionId);
   } else if (now - (acc.lastClickLog.get(code) || 0) > 3000) monitorStatus(acc, 'action', `${code}: retry ${n}`);
   else return;
@@ -133,9 +133,10 @@ function reportButtonAfterClick(acc, code, sid) {
     if (!r || r.found === false) { monitorStatus(acc, 'info', `${code}: row not visible`); return; }
     const b = r.button || '?';
     let meaning;
-    if (/^\+?\s*Add$/i.test(b)) meaning = 'click ignored';
+    if (b === 'Register') meaning = 'click ignored';
     else if (r.pending || r.added) meaning = 'click accepted';
     else if (r.full) meaning = 'seat taken';
+    else if (b === 'Register off') meaning = 'Register now off';
     else meaning = 'unknown state';
     const hidden = acc.win.isMinimized() || !acc.win.isVisible();
     monitorStatus(acc, 'info', `${code}: ${meaning} (${b})` + (hidden ? ', window hidden' : ''));
@@ -144,13 +145,15 @@ function reportButtonAfterClick(acc, code, sid) {
 
 // Fallback clicker, used by the poll only while the in-page watcher is not
 // running (e.g. right after a reload). DOM click only: it acts on the exact
-// Add element, so it can never land on a different button. Real mouse clicks
+// Register element, so it can never land on a different button. Real mouse clicks
 // are only sent by the watcher, which guards them (see fastWatcherInPage).
 async function attemptAdd(acc, code, slot) {
   const wc = liveWebContents(acc);
   if (!wc) return;
   const rec = acc.addAttempts.get(code) || { count: 0, lastAt: 0, lastWarn: 0 };
   if (Date.now() - rec.lastAt < ADD_RETRY_MS) return;
+  // Same limit as the watcher: a few clicks per opening, then wait 30 s.
+  if (rec.count >= MAX_CLICKS_PER_OPENING) { if (Date.now() - rec.lastAt < 30000) return; rec.count = 0; }
   rec.count++; rec.lastAt = Date.now();
   acc.addAttempts.set(code, rec);
 
@@ -161,8 +164,8 @@ async function attemptAdd(acc, code, slot) {
     if (res && res.added) return;
     if (Date.now() - rec.lastWarn < 10000) return;
     rec.lastWarn = Date.now();
-    monitorStatus(acc, 'warn', `${code}: Add button not found`);
-    console.log(`[${acc.label}][${code}] Add not found`, JSON.stringify(res)); // details in the terminal only
+    monitorStatus(acc, 'warn', `${code}: Register button not found`);
+    console.log(`[${acc.label}][${code}] Register not found`, JSON.stringify(res)); // details in the terminal only
     return;
   }
   if (res.disabled) return;
@@ -205,6 +208,10 @@ function onConsoleMessage(acc, event, level, message) {
   const wc = liveWebContents(acc);
   if (r.kind === 'added') {
     if (acc.clickedCodes.delete(r.code)) monitorStatus(acc, 'good', `${r.code}: ADDED ✓`);
+    return;
+  }
+  if (r.kind === 'capped') {
+    monitorStatus(acc, 'warn', `${r.code}: no response after ${r.n} clicks, pausing 30 s`);
     return;
   }
   if (r.kind === 'blocked') {
@@ -382,7 +389,7 @@ async function monitorTick(acc) {
           monitorStatus(acc, 'warn', `${reading.code}: NOT added (${reading.button || '?'})` + (msg ? ` - ${msg}` : ''));
         }
         if (reading.added && acc.clickedCodes.delete(reading.code)) monitorStatus(acc, 'good', `${reading.code}: ADDED ✓`);
-        if (reading.added) acc.addAttempts.delete(reading.code);
+        if (reading.added || reading.full) acc.addAttempts.delete(reading.code); // opening over
         if (reading.full || reading.added) checkMonitor.resetCode(reading.code);
         continue;
       }

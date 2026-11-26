@@ -1,52 +1,70 @@
 // selftest/dom.electron.js
 //
-// Runs the real Add scripts inside Electron against a mock portal page and
-// clicks with sendInputEvent, the same way main.js does. The mock's Add
-// buttons ignore untrusted clicks, as some real portals do, and the page
-// disables console.debug, as many production sites do.
+// Runs the real Register scripts inside Electron against mock copies of the
+// /student/courseRegistration table and clicks with sendInputEvent, the same
+// way main.js does. Every row has a Register AND a Drop button, like the real
+// page. The top safety rule checked throughout: Drop is never clicked.
 //
 // Run:  npm run selftest:dom
 
 const { app, BrowserWindow } = require('electron');
 const {
   buildAddCourseScript, buildReaderScript, buildFastWatcherScript, classify, FAST_ADD_PREFIX, KEEP_VISIBLE_SCRIPT,
+  MAX_CLICKS_PER_OPENING,
 } = require('../monitor.js');
 
-const PAGE = `<!doctype html><html><body style="margin:0">
-<div id="root"><div class="list">
-  <div class="row"><span>HU426</span><span>Language And Social Media</span><span> E4 </span><span>5 left</span><button class="add">+ Add</button></div>
-  <div class="row"><span>CS318</span><span>Compilers</span><span> E2 </span><span>Added</span><button>Drop</button></div>
-  ${Array.from({ length: 30 }, (_, i) => `<div class="row"><span>XX${100 + i}</span><span>Filler</span><span>Full</span></div>`).join('')}
-  <div class="row"><span>EV302</span><span>Environmental Studies</span><span> E3 </span><span>2 left</span><button class="add">+ Add</button></div>
-  <div class="row"><span>PE306N</span><span>Sports</span><span> E1 </span><span>3 left</span><button class="add">+ Add</button></div>
-  <div class="row"><span>12</span><span>CE201</span><span>STRUCTURES</span><span>4</span><span> E2 </span><span>9 left</span><button class="add">+ Add</button></div>
-  <div class="card"><div class="hd"><b>7</b><b>ME301</b><i>THERMO</i></div><div class="bd"><p>E2</p><p>4 left</p></div><div class="ft"><div><button class="add"><span>+</span> <span>Add</span></button></div></div></div>
-  <div class="row" id="late"><span>MA202</span><span>Probability</span><span> E2 </span><span class="st">Full</span><span class="slotbtn"></span></div>
-</div></div>
+// One table row. opts: off (disabled attr), dim (greyed via opacity only), slot.
+const row = (name, code, seats, opts = {}) =>
+  `<tr><td>${name}</td><td>${code}</td><td>4</td><td>${opts.slot || 'E4'}</td><td class="seats">${seats}</td>` +
+  `<td><button class="reg"${opts.off ? ' disabled' : ''}${opts.dim ? ' style="opacity:.5"' : ''}>Register</button></td>` +
+  `<td><button class="drop">Drop</button></td></tr>`;
+
+// behaviour: 'trustedOnly' (ignores script clicks), 'any', 'ignore' (never reacts),
+// 'reject' (shows Registering... then back to Register, like a refused request).
+const page = (rows, behaviour) => `<!doctype html><html><body style="margin:0">
+<table><tbody>
+  <tr><td colspan="7"><b>Slot E3</b></td></tr>
+  ${row('Compact Modelling and Process Simulation of Semiconductor Devices', 'SC302', 58, { slot: 'E3', dim: true })}
+  <tr><td colspan="7"><b>Slot E4</b></td></tr>
+  ${rows}
+  ${Array.from({ length: 25 }, (_, i) => row('Filler ' + i, 'FL' + (100 + i), 0, { off: true })).join('')}
+</tbody></table>
 <script>
-  console.debug = function () {};       // production sites often do this
+  console.debug = function () {};          // production sites often do this
   window.clicks = [];
+  const codeOf = b => b.closest('tr').children[1].textContent;
   document.addEventListener('click', e => {
-    const b = e.target.closest('button.add');
-    if (!b) return;
-    const row = b.closest('.row');
-    window.clicks.push({ code: row.firstElementChild.textContent, trusted: e.isTrusted, at: performance.timeOrigin + performance.now() });
-    if (!e.isTrusted) return;            // portal ignores synthetic clicks
-    row.querySelector('span:nth-child(4)').textContent = 'Added';
-    b.textContent = 'Drop'; b.className = '';
+    const b = e.target.closest('button'); if (!b) return;
+    window.clicks.push({ code: codeOf(b), btn: b.textContent, trusted: e.isTrusted, at: performance.timeOrigin + performance.now() });
+    if (b.textContent !== 'Register' || b.disabled) return;
+    const mode = ${JSON.stringify(behaviour)};
+    if (mode === 'ignore' || (mode === 'trustedOnly' && !e.isTrusted)) return;
+    if (mode === 'reject') { b.textContent = 'Registering...'; setTimeout(() => { b.textContent = 'Register'; }, 40); return; }
+    const s = b.closest('tr').querySelector('.seats'); s.textContent = String(Math.max(0, +s.textContent - 1));
+    b.textContent = 'Registered'; b.disabled = true;
   });
-  window.openSeat = function () {         // a seat opens on the live page
-    const row = document.getElementById('late');
-    row.querySelector('.st').textContent = '1 left';
-    row.querySelector('.slotbtn').innerHTML = '<button class="add">+ Add</button>';
+  window.openSeat = code => {                // a seat opens on the live page
+    const tr = [...document.querySelectorAll('tr')].find(t => t.children[1] && t.children[1].textContent === code);
+    tr.querySelector('.seats').textContent = '1';
+    const b = tr.querySelector('.reg'); b.disabled = false; b.style.opacity = '';
     return performance.timeOrigin + performance.now();
   };
 </script></body></html>`;
 
+const SCREENSHOT_ROWS =
+  row('Polymer Processing Technique', 'CH310n', 53) +
+  row('Machine Learning', 'MC310', 0, { off: true }) +
+  row('Applied Entrepreneurship and Venturing', 'CD302', 0, { off: true }) +
+  row('Power Electronics Converters and Drives for Electric Vehicles', 'EV302', 72) +
+  row('Public Finance And Policy', 'HU404', 0, { off: true }) +
+  row('cyclonic risk and management', 'CE328', 48, { dim: true }) +
+  row('Deep Learning', 'CS318', 99, { off: true }) +
+  row('Information Theory and Coding', 'EC328', 0, { off: true });
+
 let passed = 0, failed = 0;
 function ok(cond, name, detail) {
   if (cond) { passed++; console.log('  PASS  ' + name); }
-  else { failed++; console.log('  FAIL  ' + name + (detail ? '\n        -> ' + JSON.stringify(detail) : '')); }
+  else { failed++; console.log('  FAIL  ' + name + (detail !== undefined ? '\n        -> ' + JSON.stringify(detail) : '')); }
 }
 const wait = ms => new Promise(r => setTimeout(r, ms));
 function trustedClick(wc, x, y) {
@@ -56,216 +74,140 @@ function trustedClick(wc, x, y) {
   wc.sendInputEvent({ type: 'mouseDown', x: px, y: py, button: 'left', clickCount: 1 });
   wc.sendInputEvent({ type: 'mouseUp', x: px, y: py, button: 'left', clickCount: 1 });
 }
+const noDrops = clicks => !clicks.some(c => c.btn === 'Drop');
 
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ show: true, width: 900, height: 500, webPreferences: { contextIsolation: true, backgroundThrottling: false } });
-  await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(PAGE));
+  const win = new BrowserWindow({ show: true, width: 1100, height: 600, webPreferences: { contextIsolation: true, backgroundThrottling: false } });
   const wc = win.webContents;
   const run = s => wc.executeJavaScript(s, true);
+  const load = async html => { await wc.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html)); };
 
-  // ---- locate + trusted click ----
-  const loc = await run(buildAddCourseScript('EV302', 'E3', 'locate'));
-  ok(loc.found && /EV302/.test(loc.rowText) && !/HU426/.test(loc.rowText), 'locates EV302 row, not first Add on page', loc);
-  ok(!loc.covered, 'EV302 button is scrolled into view and hit-testable', loc);
-  trustedClick(wc, loc.x, loc.y);
-  await wait(200);
-  const clicks = await run('window.clicks');
-  ok(clicks.length === 1 && clicks[0].code === 'EV302' && clicks[0].trusted, 'real click hits EV302 only and is trusted', clicks);
-
-  const readings = await run(buildReaderScript(['EV302']));
-  ok(readings[0].found && classify(readings[0]) === 'registered', 'reader sees EV302 as Added after click', readings);
-  const after = await run(buildAddCourseScript('EV302', 'E3', 'locate'));
-  ok(!after.found && after.added, 'no Add button for EV302 once added (no double click)', after);
-
-  const wrongSlot = await run(buildAddCourseScript('PE306N', 'E4', 'locate'));
-  ok(!wrongSlot.found, 'slot mismatch is refused', wrongSlot);
-
-  const dom = await run(buildAddCourseScript('HU426', 'E4', 'domclick'));
-  const c2 = await run('window.clicks');
-  ok(dom.found && c2.length === 2 && c2[1].code === 'HU426' && c2[1].trusted === false,
-    'DOM-click fallback hits HU426 (untrusted, as expected)', c2);
-
-  // Glued text around the code: "12CE201STRUCTURES4 E2 9 left+ Add".
-  const glued = await run(buildAddCourseScript('CE201', 'E2', 'locate'));
-  ok(glued.found && /CE201/.test(glued.rowText) && !/EV302|MA202/.test(glued.rowText), 'finds Add when code is glued to serial no. / CAPS name / credits', glued);
-  const r2 = await run(buildReaderScript(['CE201']));
-  ok(classify(r2[0]) === 'available', 'reader sees glued CE201 as available', r2);
-  // Card layout: code in header, button nested in footer.
-  const card = await run(buildAddCourseScript('ME301', 'E2', 'locate'));
-  ok(card.found && /ME301/.test(card.rowText), 'finds Add in card layout (code in header, button in footer)', card);
-  const ghost = await run(buildAddCourseScript('ZZ999', '', 'locate'));
-  ok(!ghost.found && ghost.codeNodes === 0 && Array.isArray(ghost.rejected), 'unknown course returns diagnostics, no click', ghost);
-
-  // ---- watcher on a page that IGNORES DOM clicks: DOM first, real mouse 400 ms later ----
-  const SID = 7;
-  const reports = [];
+  // Every watcher report; main.js's job (real mouse click on 'trusted') is
+  // replayed here unless a test swaps in its own handler.
+  let reports = [], onTrusted = r => trustedClick(wc, r.x, r.y);
   wc.on('console-message', (event, level, message) => {
     const msg = typeof message === 'string' ? message : (event && event.message) || '';
     if (!msg.startsWith(FAST_ADD_PREFIX)) return;
     const r = JSON.parse(msg.slice(FAST_ADD_PREFIX.length));
     reports.push(r);
-    if (r.sid === SID && r.kind === 'trusted') trustedClick(wc, r.x, r.y); // what main.js does
+    if (r.kind === 'trusted') onTrusted(r);
   });
-  const inst = await wc.executeJavaScriptInIsolatedWorld(1717,
-    [{ code: buildFastWatcherScript([{ code: 'MA202', slot: 'E2' }], SID, 300, 60) }], true);
-  ok(inst && inst.installed, 'watcher installs in isolated world', inst);
-  await wait(100);
-  ok(reports.length === 0, 'watcher stays quiet while MA202 is Full', reports);
+  let sid = 10;
+  const watch = entries => wc.executeJavaScriptInIsolatedWorld(1717, [{ code: buildFastWatcherScript(entries, ++sid, 300, 60) }], true);
 
-  const openedAt = await run('window.openSeat()');
+  // ---- 1. reading the table, exactly as in the screenshot ----
+  await load(page(SCREENSHOT_ROWS, 'trustedOnly'));
+  const rd = await run(buildReaderScript(['HU404', 'EV302', 'CE328', 'CH310N', 'CS318', 'SC302', 'ZZ999']));
+  const by = Object.fromEntries(rd.map(r => [r.code, r]));
+  ok(classify(by.HU404) === 'full' && by.HU404.seats === 0 && by.HU404.slot === 'E4' && by.HU404.name === 'Public Finance And Policy',
+    'HU404: 0 seats -> Full, name + slot read', by.HU404);
+  ok(classify(by.EV302) === 'available' && by.EV302.seats === 72, 'EV302: 72 seats + Register on -> available', by.EV302);
+  ok(classify(by.CE328) === 'unknown' && by.CE328.button === 'Register off', 'CE328: 48 seats but greyed Register -> not clickable', by.CE328);
+  ok(classify(by.CS318) === 'unknown' && by.CS318.registerOff, 'CS318: 99 seats but disabled Register -> not clickable', by.CS318);
+  ok(classify(by.CH310N) === 'available' && by.CH310N.seats === 53, 'CH310n (lowercase on page) found as CH310N', by.CH310N);
+  ok(classify(by.SC302) === 'unknown' && by.SC302.slot === 'E3', 'SC302 in slot E3 read correctly', by.SC302);
+  ok(by.ZZ999.found === false, 'course not on page -> not found', by.ZZ999);
+  ok(!rd.some(r => r.added), 'Drop buttons on every row do NOT make a course read as registered', rd.map(r => r.code + ':' + r.added));
+
+  // ---- 2. locate + real mouse click hits EV302's Register only ----
+  const loc = await run(buildAddCourseScript('EV302', 'E4', 'locate'));
+  ok(loc.found && /EV302/.test(loc.rowText) && !/CH310n|HU404/.test(loc.rowText) && !loc.covered, 'locates EV302 Register, on screen', loc);
+  trustedClick(wc, loc.x, loc.y);
+  await wait(200);
+  let clicks = await run('window.clicks');
+  ok(clicks.length === 1 && clicks[0].code === 'EV302' && clicks[0].btn === 'Register' && clicks[0].trusted, 'real click lands on EV302 Register only', clicks);
+  const ev = (await run(buildReaderScript(['EV302'])))[0];
+  ok(classify(ev) === 'registered', 'EV302 reads REGISTERED after the click', ev);
+  const again = await run(buildAddCourseScript('EV302', 'E4', 'locate'));
+  ok(!again.found && again.added, 'no second click once registered', again);
+  ok(!(await run(buildAddCourseScript('CH310N', 'E3', 'locate'))).found, 'slot mismatch (CH310n is E4, asked E3) refused');
+  ok(!(await run(buildAddCourseScript('HU404', '', 'locate'))).found, 'HU404 with 0 seats: nothing to click');
+  await run(buildAddCourseScript('CE328', '', 'domclick'));
+  clicks = await run('window.clicks');
+  ok(!clicks.some(c => c.code === 'CE328'), 'greyed Register (CE328) is never clicked', clicks);
+
+  // ---- 3. watcher: page ignores script clicks -> DOM click, then ONE real click ----
+  await load(page(SCREENSHOT_ROWS, 'trustedOnly'));
+  reports = [];
+  ok((await watch([{ code: 'HU404', slot: 'E4' }])).installed, 'watcher installs in isolated world');
+  await wait(150);
+  ok(reports.length === 0, 'watcher quiet while HU404 has 0 seats', reports);
+  const openedAt = await run("window.openSeat('HU404')");
+  await wait(900);
+  clicks = await run('window.clicks');
+  const hu = clicks.filter(c => c.code === 'HU404');
+  ok(hu.length === 2 && !hu[0].trusted && hu[1].trusted, 'DOM click first, then one real-mouse click', { hu, reports });
+  if (hu.length) ok(hu[0].at - openedAt < 20, `seat-open -> first click ${(hu[0].at - openedAt).toFixed(1)} ms`);
+  ok(classify((await run(buildReaderScript(['HU404'])))[0]) === 'registered', 'HU404 registered');
+  ok(reports.some(r => r.kind === 'added' && r.code === 'HU404'), 'watcher reports added', reports);
+  ok(noDrops(clicks) && clicks.every(c => c.code === 'HU404'), 'nothing else clicked: no Drop, no other course', clicks);
+
+  // ---- 4. click limit: page never reacts -> at most MAX clicks, then pause ----
+  await load(page(SCREENSHOT_ROWS, 'ignore'));
+  reports = [];
+  await watch([{ code: 'MC310', slot: '' }]);
+  await run("window.openSeat('MC310')");
+  await wait(2500);
+  clicks = await run('window.clicks');
+  const mc = clicks.filter(c => c.code === 'MC310');
+  ok(mc.length === MAX_CLICKS_PER_OPENING, `ignored clicks stop at ${MAX_CLICKS_PER_OPENING} (got ${mc.length})`, mc.length);
+  ok(reports.some(r => r.kind === 'capped' && r.code === 'MC310'), 'watcher reports the pause', reports);
+  ok(noDrops(clicks), 'no Drop clicked', clicks);
+
+  // ---- 5. refused request: "Registering..." then back to Register -> no endless loop ----
+  await load(page(SCREENSHOT_ROWS, 'reject'));
+  reports = [];
+  await watch([{ code: 'CD302', slot: '' }]);
+  await run("window.openSeat('CD302')");
+  await wait(3000);
+  clicks = await run('window.clicks');
+  const cd = clicks.filter(c => c.code === 'CD302');
+  ok(cd.length <= MAX_CLICKS_PER_OPENING && cd.length >= 1, `refused request is not retried forever (${cd.length} clicks in 3 s)`, cd.length);
+  ok(noDrops(clicks), 'no Drop clicked', clicks);
+
+  // ---- 6. several listed courses open at once; unlisted course and Drop untouched ----
+  await load(page(SCREENSHOT_ROWS, 'any'));
+  reports = [];
+  await watch([{ code: 'EC328', slot: '' }, { code: 'CD302', slot: 'E4' }]);
+  await run("window.openSeat('EC328'); window.openSeat('CD302'); window.openSeat('MC310')");
+  await wait(1200);
+  clicks = await run('window.clicks');
+  ok(clicks.filter(c => c.code === 'EC328').length === 1 && clicks.filter(c => c.code === 'CD302').length === 1,
+    'both listed courses registered, each exactly once', clicks);
+  ok(!clicks.some(c => c.code === 'MC310'), 'unlisted MC310 (also open) never clicked', clicks);
+  ok(noDrops(clicks), 'no Drop clicked', clicks);
+
+  // ---- 7. race: Drop slides under the real mouse click -> blocked ----
+  await load(page(SCREENSHOT_ROWS, 'trustedOnly'));
+  reports = [];
+  onTrusted = async r => {
+    await run(`(() => { const tr = [...document.querySelectorAll('tr')].find(t => t.children[1] && t.children[1].textContent === 'HU404');
+      const reg = tr.querySelector('.reg'), drop = tr.querySelector('.drop');
+      reg.parentElement.appendChild(drop); reg.remove(); })()`); // Drop now sits where Register was
+    trustedClick(wc, r.x, r.y);
+  };
+  await watch([{ code: 'HU404', slot: '' }]);
+  await run("window.openSeat('HU404')");
   await wait(800);
-  const c3 = (await run('window.clicks')).filter(c => c.code === 'MA202');
-  ok(c3.length === 2 && !c3[0].trusted && c3[1].trusted,
-    'DOM click first, then ONE real-mouse fallback (page console.debug disabled)', { reports, c3 });
-  if (c3.length === 2) {
-    const first = c3[0].at - openedAt, fallback = c3[1].at - openedAt;
-    ok(first < 20, `seat-open -> DOM click ${first.toFixed(1)} ms`, first);
-    ok(fallback < 120, `seat-open -> real-mouse fallback ${fallback.toFixed(0)} ms`, fallback);
-  }
-  ok(/Added/.test(await run('document.getElementById("late").textContent')), 'MA202 row shows Added', null);
-  await wait(500); // the watcher re-checks one retry-gap after its last click
-  ok(reports.some(r => r.kind === 'added' && r.code === 'MA202'), 'watcher reports "added"', reports);
+  clicks = await run('window.clicks');
+  ok(noDrops(clicks), 'real click landing on Drop is cancelled (Drop never fires)', clicks);
+  ok(reports.some(r => r.kind === 'blocked'), 'watcher reports the blocked click', reports);
+  onTrusted = r => trustedClick(wc, r.x, r.y);
 
-  // ---- the real portal's structure (from the live log) ----
-  // ul.f-list > li.f-slat > div.f-meta > span.f-code ; button text Add / Adding / Drop / Waiting
-  const slat = (code, left, btn, name) =>
-    `<li class="f-slat"><div class="f-meta"><span class="f-code">${code}</span><span>4 credits</span><span class="left">${left}</span></div>` +
-    `<span class="f-name">${name}</span><button class="f-btn">${btn}</button></li>`;
-  const PORTAL = `<!doctype html><html><body><ul class="f-list">
-    ${slat('EV301', '12left', 'Add', 'Battery Systems')}
-    ${slat('EV302', '0left', 'Waiting', 'Power Electronics Converters and Drives for Electric Vehicles')}
-    ${slat('EV303', '72left', 'Add', 'Charging Infrastructure')}
-    <li class="f-slat"><div class="f-meta"><span class="f-code">EE316n</span><span>4 credits</span></div><span class="f-name">Switch Mode Power Supplies</span><button class="f-btn" id="ee">Add</button></li>
-    ${Array.from({ length: 22 }, (_, i) => slat('EE' + (400 + i), '3left', 'Add', 'Filler')).join('')}
-  </ul><script>
-    window.clicks = [];
-    document.addEventListener('click', e => {
-      const b = e.target.closest('.f-btn'); if (!b || b.textContent !== 'Add') return;
-      const li = b.closest('li');
-      window.clicks.push({ code: li.querySelector('.f-code').textContent, trusted: e.isTrusted, at: performance.timeOrigin + performance.now() });
-      b.textContent = 'Adding'; setTimeout(() => { b.textContent = 'Drop'; }, 60); // accepts DOM clicks
-    });
-    window.openSeat = () => {
-      const li = [...document.querySelectorAll('li')].find(l => l.querySelector('.f-code').textContent === 'EV302');
-      li.querySelector('.left').textContent = '72left'; li.querySelector('.f-btn').textContent = 'Add';
-      return performance.timeOrigin + performance.now();
-    };
-  </script></body></html>`;
-  await wc.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(PORTAL));
-
-  const waiting = (await run(buildReaderScript(['EV302'])))[0];
-  ok(classify(waiting) === 'full', 'portal row with "Waiting" reads as Full (not "checking")', waiting);
-
-  reports.length = 0;
-  await wc.executeJavaScriptInIsolatedWorld(1717, [{ code: buildFastWatcherScript([{ code: 'EV302', slot: '' }], SID, 300, 60) }], true);
-  await wait(50);
-  ok(reports.length === 0, 'no click while EV302 is Waiting (other courses\' Add untouched)', reports);
-  const open = (await run(buildReaderScript(['EV303'])))[0];
-  ok(classify(open) === 'available' && open.seats === 72 && open.name === 'Charging Infrastructure',
-    'reader: 72 seats + correct name from the real li.f-slat row', open);
-  const ee = (await run(buildReaderScript(['EE316N'])))[0];
-  ok(classify(ee) === 'available' && ee.name === 'Switch Mode Power Supplies',
-    'EE316n: plain "Add", no seat count -> available (was "checking")', ee);
-  await run('document.getElementById("ee").textContent = "Pending"');
-  const eeP = (await run(buildReaderScript(['EE316N'])))[0];
-  ok(classify(eeP) === 'unknown' && eeP.button === 'Pending', 'unknown portal state exposes its button word', eeP);
-  const opened = await run('window.openSeat()');
-  await wait(600);
-  const pc = await run('window.clicks');
-  ok(pc.length === 1 && pc[0].code === 'EV302' && !pc[0].trusted, 'exactly one DOM click, on EV302 only (no retry while "Adding")', pc);
-  if (pc.length) ok(pc[0].at - opened < 20, `seat-open -> EV302 DOM click ${(pc[0].at - opened).toFixed(1)} ms`, null);
-  const done = (await run(buildReaderScript(['EV302'])))[0];
-  ok(classify(done) === 'registered' && done.name === 'Power Electronics Converters and Drives for Electric Vehicles',
-    'reader shows EV302 ADDED (with name) once button says Drop', done);
-  ok(reports.some(r => r.kind === 'added' && r.code === 'EV302'), 'watcher reports EV302 added', reports);
-
-  // ---- HIDDEN portal window: the portal's own polling timer must keep
-  // running and the in-page DOM click must still fire instantly ----
-  const HIDDEN = `<!doctype html><html><body><ul class="f-list">
-    ${slat('ME318N', '0left', 'Waiting', 'Reliability')}${slat('ME319', '4left', 'Add', 'Other')}
-  </ul><script>
-    window.ticks = 0; window.clicks = [];
-    const li = document.querySelector('li');
-    setInterval(() => {                     // the portal polling its server
-      window.ticks++;
-      if (window.ticks === 5) { li.querySelector('.left').textContent = '1left'; li.querySelector('.f-btn').textContent = 'Add'; window.openedAt = performance.timeOrigin + performance.now(); }
-    }, 100);
-    document.addEventListener('click', e => {
-      const b = e.target.closest('.f-btn'); if (!b || b.textContent !== 'Add') return;
-      window.clicks.push({ code: b.closest('li').querySelector('.f-code').textContent, at: performance.timeOrigin + performance.now() });
-      b.textContent = 'Adding'; setTimeout(() => { b.textContent = 'Drop'; }, 50);
-    });
-  </script></body></html>`;
-  await wc.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(HIDDEN));
+  // ---- 8. minimised/hidden window: page timers keep running, DOM click still instant ----
+  await load(page(SCREENSHOT_ROWS, 'any').replace('</script>',
+    "window.ticks=0;setInterval(()=>{window.ticks++;if(window.ticks===5)window.openedAt=window.openSeat('HU404');},100);</script>"));
   await run(KEEP_VISIBLE_SCRIPT);
   win.hide();
-  reports.length = 0;
-  await wc.executeJavaScriptInIsolatedWorld(1717, [{ code: buildFastWatcherScript([{ code: 'ME318N', slot: '' }], SID, 300, 60) }], true);
+  reports = [];
+  await watch([{ code: 'HU404', slot: '' }]);
   await wait(1200);
   const h = await run('({ ticks: window.ticks, clicks: window.clicks, openedAt: window.openedAt, vis: document.visibilityState })');
-  ok(!win.isVisible() && h.ticks >= 9, `hidden window: portal timers keep running (${h.ticks} ticks/1.2 s)`, h);
-  ok(h.vis === 'visible', 'hidden window: page still believes it is visible (won\'t pause its refresh)', h);
-  ok(h.clicks.length === 1 && h.clicks[0].code === 'ME318N', 'hidden window: exactly one click, on ME318N', h);
-  if (h.clicks.length) ok(h.clicks[0].at - h.openedAt < 20, `hidden window: seat-open -> DOM click ${(h.clicks[0].at - h.openedAt).toFixed(1)} ms`, h);
-  ok(reports.some(r => r.kind === 'added'), 'hidden window: watcher reports added', reports);
+  ok(!win.isVisible() && h.ticks >= 9, `hidden window: page timers keep running (${h.ticks} ticks/1.2 s)`, h);
+  ok(h.vis === 'visible', 'hidden window: page still believes it is visible', h);
+  ok(h.clicks.length === 1 && h.clicks[0].code === 'HU404' && h.clicks[0].btn === 'Register', 'hidden window: exactly one Register click', h.clicks);
+  if (h.clicks.length) ok(h.clicks[0].at - h.openedAt < 20, `hidden window: seat-open -> click ${(h.clicks[0].at - h.openedAt).toFixed(1)} ms`);
   win.show();
-
-  // ---- SAFETY: whole list added; unlisted course, Drop and Submit never touched ----
-  const SAFE = `<!doctype html><html><body><ul class="f-list">
-    ${slat('EV401', '0left', 'Waiting', 'One')}${slat('EV402', '0left', 'Waiting', 'Two')}
-    ${slat('EV403', '9left', 'Add', 'Not in my list')}${slat('EV404', '9left', 'Drop', 'Already mine')}
-  </ul><button id="submit">Submit</button><script>
-    window.clicks = [];
-    document.addEventListener('click', e => {
-      const b = e.target.closest('button'); if (!b) return;
-      const li = b.closest('li');
-      window.clicks.push((li ? li.querySelector('.f-code').textContent : '-') + ':' + b.textContent);
-      if (b.textContent === 'Add') { b.textContent = 'Adding'; setTimeout(() => { b.textContent = 'Drop'; }, 40); }
-    });
-    window.openAll = () => document.querySelectorAll('li').forEach(li => {
-      const c = li.querySelector('.f-code').textContent;
-      if (c === 'EV401' || c === 'EV402') { li.querySelector('.left').textContent = '3left'; li.querySelector('.f-btn').textContent = 'Add'; }
-    });
-  </script></body></html>`;
-  await wc.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(SAFE));
-  await wc.executeJavaScriptInIsolatedWorld(1717, [{ code: buildFastWatcherScript([{ code: 'EV401', slot: '' }, { code: 'EV402', slot: '' }], SID, 300, 60) }], true);
-  await run('window.openAll()');
-  await wait(1500);
-  const sc = await run('window.clicks');
-  ok(sc.filter(c => c === 'EV401:Add').length === 1 && sc.filter(c => c === 'EV402:Add').length === 1,
-    'both listed courses added, each exactly once', sc);
-  ok(!sc.some(c => /EV403|Drop|Submit/.test(c)), 'never clicked: unlisted course, Drop, Submit', sc);
-  const both = await run(buildReaderScript(['EV401', 'EV402']));
-  ok(both.every(r => classify(r) === 'registered'), 'both rows now read ADDED', both);
-
-  // ---- SAFETY: page moves a Drop button under the real-mouse click -> blocked ----
-  const RACE = `<!doctype html><html><body><ul class="f-list">${slat('EV501', '0left', 'Waiting', 'Race')}</ul><script>
-    window.drops = 0; window.adds = [];
-    document.addEventListener('click', e => {
-      const b = e.target.closest('.f-btn'); if (!b) return;
-      if (b.textContent === 'Drop') { window.drops++; return; }
-      if (b.textContent === 'Add') window.adds.push(e.isTrusted);   // ignores DOM clicks, waits for a real one
-    });
-    window.open1 = () => { const li = document.querySelector('li'); li.querySelector('.left').textContent = '2left'; li.querySelector('.f-btn').textContent = 'Add'; };
-    window.swapToDrop = () => { const b = document.querySelector('.f-btn'); const d = document.createElement('button');
-      d.className = 'f-btn'; d.textContent = 'Drop'; d.style.cssText = getComputedStyle(b).cssText; b.replaceWith(d); };
-  </script></body></html>`;
-  await wc.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(RACE));
-  const SID2 = 8, raceReports = [];
-  wc.on('console-message', async (event, level, message) => {
-    const msg = typeof message === 'string' ? message : (event && event.message) || '';
-    if (!msg.startsWith(FAST_ADD_PREFIX)) return;
-    const r = JSON.parse(msg.slice(FAST_ADD_PREFIX.length));
-    if (r.sid !== SID2) return;
-    raceReports.push(r.kind);
-    if (r.kind === 'trusted') { await run('window.swapToDrop()'); trustedClick(wc, r.x, r.y); } // worst-case race
-  });
-  await wc.executeJavaScriptInIsolatedWorld(1717, [{ code: buildFastWatcherScript([{ code: 'EV501', slot: '' }], SID2, 300, 60) }], true);
-  await run('window.open1()');
-  await wait(800);
-  const race = await run('({ drops: window.drops, adds: window.adds })');
-  ok(race.drops === 0, 'real click landing on a Drop button is blocked (Drop never fires)', { race, raceReports });
-  ok(raceReports.includes('blocked'), 'watcher reports the blocked click', raceReports);
 
   console.log(`\n${passed}/${passed + failed} DOM checks passed.`);
   app.exit(failed ? 1 : 0);

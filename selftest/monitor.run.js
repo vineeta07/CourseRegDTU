@@ -2,11 +2,11 @@
 //
 // Tests for the read-only seat monitor (monitor.js). No portal is contacted;
 // these exercise the pure parsing + transition + de-duplication logic, using
-// the exact row text seen on the real /register/ page.
+// the exact rows seen on the real /student/courseRegistration page.
 //
 // Run:  npm run selftest:monitor
 
-const { parseRowText, classify, createMonitor, buildReaderScript, buildAddCourseScript, PORTAL_URL } = require('../monitor.js');
+const { parseCells, classify, createMonitor, buildReaderScript, buildAddCourseScript, PORTAL_URL } = require('../monitor.js');
 
 let passed = 0, failed = 0;
 function check(name, fn) {
@@ -22,41 +22,28 @@ const expect = (cond, msg) => { if (!cond) return msg; };
 
 console.log('\nSeat monitor self-test (no portal contacted)\n');
 
-// ---- parseRowText: real row strings from the live page ----
-check('parseRowText: full course ("Full" + Notifying you)', () => {
-  const r = parseRowText('HU426', 'HU426Language And Social MediaFull Notifying you');
-  return expect(r.seats === 0 && r.full === true && r.added === false && /Language And Social Media/.test(r.name),
-    `got ${JSON.stringify(r)}`);
+// ---- parseCells: real rows from /student/courseRegistration ----
+// Name | Code | Credits | Slot | Seats | Register | Drop
+check('parseCells: full course (0 seats)', () => {
+  const r = parseCells('HU404', ['Public Finance And Policy', 'HU404', '4', 'E4', '0', 'Register', 'Drop']);
+  return expect(r.seats === 0 && r.slot === 'E4' && r.name === 'Public Finance And Policy', `got ${JSON.stringify(r)}`);
 });
-check('parseRowText: waiting course is full and name ignores neighboring courses', () => {
-  const r = parseRowText('HU426', 'HU426Language And Social MediaWaiting for a seat10HU326Rhetoric And Public Speaking');
-  return expect(r.seats === 0 && r.full === true && r.name === 'Language And Social Media',
-    `got ${JSON.stringify(r)}`);
+check('parseCells: open course (72 seats), seats not confused with credits', () => {
+  const r = parseCells('EV302', ['Power Electronics Converters and Drives for Electric Vehicles', 'EV302', '4', 'E4', '72', 'Register', 'Drop']);
+  return expect(r.seats === 72 && r.slot === 'E4' && /Power Electronics/.test(r.name), `got ${JSON.stringify(r)}`);
 });
-check('parseRowText: available course ("63 left" + Add)', () => {
-  const r = parseRowText('CH314m', 'CH314mCoating and Adhesive4 credits63 left Add');
-  return expect(r.seats === 63 && r.full === false && /Coating and Adhesive/.test(r.name),
-    `got ${JSON.stringify(r)}`);
+check('parseCells: lowercase suffix code (CH310n) matches CH310N', () => {
+  const r = parseCells('CH310N', ['Polymer Processing Technique', 'CH310n', '4', 'E4', '53', 'Register', 'Drop']);
+  return expect(r.seats === 53 && r.name === 'Polymer Processing Technique', `got ${JSON.stringify(r)}`);
 });
-check('parseRowText: visible + Add control without left text is available', () => {
-  const r = parseRowText('CS318', 'CS318Economics of Growth and Development4 creditsE1 + Add');
-  return expect(r.seats === 1 && r.full === false && r.added === false,
-    `got ${JSON.stringify(r)}`);
+check('parseCells: CH310 does not match CH310n', () => {
+  const r = parseCells('CH310', ['Polymer Processing Technique', 'CH310n', '4', 'E4', '53']);
+  return expect(r.seats === null, `got ${JSON.stringify(r)}`);
 });
-check('parseRowText: added course ("Added"/"Drop") is not full, not available', () => {
-  const r = parseRowText('IT322', 'IT322Computer VisionFull Added Drop');
-  return expect(r.added === true && r.full === false && r.seats === 0, `got ${JSON.stringify(r)}`);
-});
-check('parseRowText: strips credits and status from the name', () => {
-  const r = parseRowText('EP210', 'EP210Condensed Matter Physics4 credits72 left Add');
-  return expect(r.name === 'Condensed Matter Physics', `name was "${r.name}"`);
-});
-check('parseRowText: reads the slot from a row like "E3 · 4 cr"', () => {
-  const r = parseRowText('CS320', 'CS320Block Chain and ApplicationsE3 · 4 cr65 left Add');
-  return expect(r.slot === 'E3' && r.seats === 65 && r.name === 'Block Chain and Applications',
-    `got ${JSON.stringify(r)}`);
-});
-check('Monitor carries the slot through to state and alerts', () => {
+check('parseCells: no slot column -> seats is the last number', () => {
+  const r = parseCells('CS326', ['Some Course', 'CS326', '4', '12', 'Register', 'Drop']);
+  return expect(r.seats === 12 && r.slot === '', `got ${JSON.stringify(r)}`);
+});check('Monitor carries the slot through to state and alerts', () => {
   const m = createMonitor(['HU426']);
   m.update([{ code: 'HU426', name: 'Language And Social Media', seats: 0, full: true, slot: 'E4' }]);
   const a = m.update([{ code: 'HU426', name: 'Language And Social Media', seats: 2, full: false, slot: 'E4' }]);
@@ -129,19 +116,22 @@ check('A missing reading (page reload) keeps state and never fires', () => {
   const st = m.getState().HU426;
   return expect(a1.length === 0 && a2.length === 0 && st.status === 'full', `state ${JSON.stringify(st)}`);
 });
-check('Full row with "Notifying you" is treated as full, not available', () => {
-  const m = createMonitor(['HU426']);
-  const reading = { code: 'HU426', ...parseRowText('HU426', 'HU426Language And Social MediaFull Notifying you') };
-  const a = m.update([reading]);
-  return expect(a.length === 0 && m.getState().HU426.status === 'full', `got ${JSON.stringify(a)} state ${JSON.stringify(m.getState())}`);
+check('Seats open but Register switched off is NOT available (no click)', () => {
+  const m = createMonitor(['CE328']);
+  const a = m.update([{ code: 'CE328', seats: 48, full: false, registerOff: true, button: 'Register off' }]);
+  return expect(a.length === 0 && m.getState().CE328.status === 'unknown', `got ${JSON.stringify(a)} state ${JSON.stringify(m.getState())}`);
+});
+check('Register/locate script never mentions Drop', () => {
+  const s = buildAddCourseScript('HU404', 'E4', 'locate') + buildAddCourseScript('HU404', 'E4', 'domclick');
+  return expect(!/drop/i.test(s), 'add script contains "Drop"');
 });
 
 // ---- the in-page reader must be read-only ----
-check('Reader script targets the portal and is READ-ONLY (no click/add/submit)', () => {
+check('Reader script is READ-ONLY (no click/drop/submit)', () => {
   const s = buildReaderScript(['HU426', 'HU308', 'HU404']);
-  const badWrites = /\.click\(|courseRegister|\/register\b.*submit|addEventListener|\.submit\(|fetch\(|XMLHttpRequest|location\s*=/i;
+  const badWrites = /\.click\(|\/register\b.*submit|addEventListener|\.submit\(|fetch\(|XMLHttpRequest|location\s*=/i;
   return expect(
-    typeof s === 'string' && s.includes('querySelectorAll') && s.includes('HU426') && !badWrites.test(s) && PORTAL_URL.includes('/register/'),
+    typeof s === 'string' && s.includes('querySelectorAll') && s.includes('HU426') && !badWrites.test(s) && PORTAL_URL.includes('/student/courseRegistration'),
     'reader is not a safe read-only string'
   );
 });

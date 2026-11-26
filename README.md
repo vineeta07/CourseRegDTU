@@ -1,23 +1,20 @@
 # DTU Seat Monitor
 
-A desktop app for the redesigned DTU course-registration portal
-[`https://exam-setu.dtu.ac.in/register/`](https://exam-setu.dtu.ac.in/register/).
+A desktop app for the DTU course registration page
+[`https://exam-setu.dtu.ac.in/student/courseRegistration`](https://exam-setu.dtu.ac.in/student/courseRegistration).
 
 ## What it does
 
-- Opens the DTU portal in a separate Electron window; you log in there yourself.
-- Watches only the course codes you enter (optionally with a slot, e.g. `EE316N:E4`).
-- Clicks that course's own **Add** button the instant it appears (~1–2 ms), from
-  inside the page. If the portal doesn't react within 60 ms, it falls back to a
-  real mouse click, then keeps alternating every 300 ms until the row changes.
-- Shows each course's live state: seats left, Full, **ADDED ✓**, or the portal's
-  own button word if it is something unexpected.
-- Keeps working with the portal window covered by other windows. Don't minimise it:
-  the real-mouse fallback click needs it on screen.
-- Never clicks another course's button, **Drop**, or the final **Submit**.
-
-The app does not log in for you, solve verification, or submit the final registration.
-
+- Opens the DTU portal in a separate window; you log in there yourself.
+- Watches only the course codes you enter (optionally with a slot, e.g. `HU404:E4`).
+- Clicks that course's own **Register** button the instant it is enabled with seats > 0.
+  If the portal doesn't react within 60 ms, it tries a real mouse click.
+- At most 4 clicks per seat opening; if nothing changes it pauses 30 s.
+- Skips greyed-out Register buttons (courses not open to you).
+- Shows each course's live state: seats left, Full, **ADDED ✓**, or the portal's button state.
+- **Never clicks Drop.** It only ever clicks a button that says exactly "Register",
+  in the row of a course on your list. A real mouse click that would land on
+  anything else is cancelled.
 ## Download
 
 Download the latest installer or portable Windows build from:
@@ -26,11 +23,11 @@ https://github.com/vineeta07/CourseRegDTU/releases/latest
 
 ## Use
 
-1. Start the app and enter course codes, one per row: `EV302`, or `HU426:E4` to require a slot.
+1. Start the app and enter course codes, one per row: `EV302`, or `HU404:E4` to require a slot.
 2. Click **Start Monitoring**.
-3. Sign in in the portal window and open the course list.
+3. Sign in in the portal window and open Academics > Course Registration. Keep the slots you watch expanded.
 4. Keep the portal window open (other windows on top are fine). Don't minimise or close it, or navigate away from the course list.
-5. When a seat opens the app adds the course and shows **ADDED ✓**.
+5. When a seat opens the app clicks Register and shows **ADDED ✓** once the portal confirms.
 
 ## Notes
 
