@@ -483,4 +483,8 @@ select { width: 100%; padding: 8px; border-radius: 6px; }
 .account-head { display: flex; gap: 10px; align-items: center; }
 .account-head .account-name { flex: 1; padding: 8px 12px; font-size: 1em; font-weight: 600; border: 1px solid #ced4da; border-radius: 8px; }
 .course-list:empty { display: none; }
+.priority { min-width: 22px; font-weight: 600; color: #6b7280; text-align: right; }
+.priority-hint { font-weight: 400; font-size: 0.8em; color: #6b7280; }
+.move-up { padding: 10px 12px; background: #fff; border: 1px solid #ced4da; border-radius: 8px; cursor: pointer; }
+.move-up:disabled { opacity: 0.35; cursor: default; }
 #add-account { margin-top: 4px; }

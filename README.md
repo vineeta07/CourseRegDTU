@@ -10,6 +10,11 @@ A desktop app for the DTU course registration page
 - Clicks that course's own **Register** button the instant it is enabled with seats > 0.
   If the portal doesn't react within 60 ms, it tries a real mouse click.
 - At most 4 clicks per seat opening; if nothing changes it pauses 30 s.
+- **Priority:** the course list order is the priority (top = highest; use ↑ to move a
+  course up). The portal allows one course per slot, so when several courses in the
+  same slot are open, only the highest-priority one is registered. If a higher-priority
+  course opens in a slot where you already hold a lower one, the app tells you; it
+  will not switch for you, because that needs a Drop.
 - Skips greyed-out Register buttons (courses not open to you).
 - Shows each course's live state: seats left, Full, **ADDED ✓**, or the portal's button state.
 - **Never clicks Drop.** It only ever clicks a button that says exactly "Register",

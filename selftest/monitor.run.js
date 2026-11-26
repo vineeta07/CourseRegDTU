@@ -6,7 +6,7 @@
 //
 // Run:  npm run selftest:monitor
 
-const { parseCells, classify, createMonitor, buildReaderScript, buildAddCourseScript, PORTAL_URL } = require('../monitor.js');
+const { parseCells, classify, blockedByLowerPriority, createMonitor, buildReaderScript, buildAddCourseScript, PORTAL_URL } = require('../monitor.js');
 
 let passed = 0, failed = 0;
 function check(name, fn) {
@@ -124,6 +124,30 @@ check('Seats open but Register switched off is NOT available (no click)', () => 
 check('Register/locate script never mentions Drop', () => {
   const s = buildAddCourseScript('HU404', 'E4', 'locate') + buildAddCourseScript('HU404', 'E4', 'domclick');
   return expect(!/drop/i.test(s), 'add script contains "Drop"');
+});
+
+// ---- priority: higher course open while you hold a lower one in that slot ----
+check('Priority: warns when #1 opens but you hold #2 in the same slot', () => {
+  const b = blockedByLowerPriority([
+    { code: 'HU404', found: true, seats: 3, registerOff: true, slot: 'E4' },
+    { code: 'EV302', found: true, seats: 71, registerOff: true, added: true, slot: 'E4' },
+  ]);
+  return expect(b.length === 1 && b[0].code === 'HU404' && b[0].held === 'EV302', `got ${JSON.stringify(b)}`);
+});
+check('Priority: no warning when the course you hold is HIGHER priority', () => {
+  const b = blockedByLowerPriority([
+    { code: 'EV302', found: true, seats: 71, registerOff: true, added: true, slot: 'E4' },
+    { code: 'HU404', found: true, seats: 3, registerOff: true, slot: 'E4' },
+  ]);
+  return expect(b.length === 0, `got ${JSON.stringify(b)}`);
+});
+check('Priority: no warning across different slots or with 0 seats', () => {
+  const b = blockedByLowerPriority([
+    { code: 'HU404', found: true, seats: 3, registerOff: true, slot: 'E4' },
+    { code: 'IT308', found: true, seats: 0, registerOff: true, added: true, slot: 'E1' },
+    { code: 'HU426', found: true, seats: 0, registerOff: true, slot: 'E1' },
+  ]);
+  return expect(b.length === 0, `got ${JSON.stringify(b)}`);
 });
 
 // ---- the in-page reader must be read-only ----

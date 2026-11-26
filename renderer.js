@@ -85,14 +85,37 @@ document.addEventListener('DOMContentLoaded', () => {
     removeBtn.className = 'remove-course';
     removeBtn.type = 'button';
     removeBtn.setAttribute('aria-label', 'Remove course');
-    removeBtn.addEventListener('click', () => row.remove());
+    removeBtn.addEventListener('click', () => { row.remove(); renumber(p); });
+    // Priority = order in the list. ↑ moves a course one place up.
+    const rank = document.createElement('span');
+    rank.className = 'priority';
+    const upBtn = document.createElement('button');
+    upBtn.textContent = '↑';
+    upBtn.className = 'move-up';
+    upBtn.type = 'button';
+    upBtn.title = 'Higher priority';
+    upBtn.setAttribute('aria-label', 'Move course up (higher priority)');
+    upBtn.addEventListener('click', () => {
+      if (row.previousElementSibling) p.courseList.insertBefore(row, row.previousElementSibling);
+      renumber(p);
+    });
     codeInput.addEventListener('keydown', event => {
       if (event.key === 'Enter') addCourseRow(p);
     });
+    row.appendChild(rank);
     row.appendChild(codeInput);
+    row.appendChild(upBtn);
     row.appendChild(removeBtn);
     p.courseList.appendChild(row);
+    renumber(p);
     if (focus) codeInput.focus();
+  }
+
+  function renumber(p) {
+    [...p.courseList.children].forEach((row, i) => {
+      row.querySelector('.priority').textContent = `${i + 1}.`;
+      row.querySelector('.move-up').disabled = p.running || i === 0;
+    });
   }
 
   // Entries may be "HU426" or "HU426:E4".
@@ -118,6 +141,7 @@ document.addEventListener('DOMContentLoaded', () => {
     p.clearBtn.disabled = running;
     p.name.disabled = running;
     p.courseList.querySelectorAll('input, .remove-course').forEach(el => { el.disabled = running; });
+    renumber(p); // also locks/unlocks the ↑ buttons
     p.root.classList.toggle('running', running);
   }
 

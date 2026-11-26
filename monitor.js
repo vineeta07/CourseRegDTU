@@ -59,6 +59,20 @@ function classify(reading) {
   return 'unknown';
 }
 
+// Readings in priority order (top first). Returns the courses that have seats
+// but whose Register is greyed because you hold a LOWER-priority course from
+// the list in the same slot: [{ code, seats, slot, held }]. Switching needs a
+// Drop, which the app never does, so these are only reported to the user.
+function blockedByLowerPriority(readings) {
+  const out = [];
+  (readings || []).forEach((r, i) => {
+    if (!r || !r.found || r.added || !(r.seats > 0) || !r.registerOff || !r.slot) return;
+    const held = readings.slice(i + 1).find(o => o && o.found && o.added && o.slot === r.slot);
+    if (held) out.push({ code: r.code, seats: r.seats, slot: r.slot, held: held.code });
+  });
+  return out;
+}
+
 // Creates an independent, de-duplicating monitor for the given course codes.
 function createMonitor(courseCodes) {
   const codes = (courseCodes || []).map(c => String(c).trim().toUpperCase()).filter(Boolean);
@@ -230,10 +244,10 @@ function locateRegisterInPage(code, slot, mode, find, parse, isOff) {
   // Last line of defence: never anything but the exact word "Register".
   if (!/^Register$/i.test(norm(btn.textContent || btn.value))) return { found: false, reason: 'not a Register button' };
   var disabled = isOff(btn);
-  if (mode === 'peek') return { found: true, disabled: disabled, rowText: rowText };
+  if (mode === 'peek') return { found: true, disabled: disabled, slot: f.info.slot, rowText: rowText };
   if (mode === 'domclick') {
     if (!disabled) btn.click();
-    return { found: true, method: 'dom', disabled: disabled, rowText: rowText };
+    return { found: true, method: 'dom', disabled: disabled, slot: f.info.slot, rowText: rowText };
   }
   window.__dtuLastLocated = btn; // lets the watcher guard the real-mouse click
   var r = btn.getBoundingClientRect();
@@ -275,7 +289,7 @@ const FAST_ADD_PREFIX = '__DTU_FAST_ADD__';
 // {kind:'dom'|'trusted'|'added'|'blocked'|'capped', code, n, ...}.
 function fastWatcherInPage(list, sid, gap, prefix, locate, quick, maxClicks, find, parse, isOff) {
   if (window.__dtuFast && window.__dtuFast.obs) window.__dtuFast.obs.disconnect();
-  var st = { sid: sid, last: {}, n: {}, capped: {}, timers: {}, pending: false, obs: null, armed: null };
+  var st = { sid: sid, last: {}, n: {}, capped: {}, slotOf: {}, waited: {}, timers: {}, pending: false, obs: null, armed: null };
   window.__dtuFast = st;
   function report(o) { o.sid = sid; console.debug(prefix + JSON.stringify(o)); }
   function loc(code, slot, mode) { return locate(code, slot, mode, find, parse, isOff); }
@@ -310,9 +324,15 @@ function fastWatcherInPage(list, sid, gap, prefix, locate, quick, maxClicks, fin
     st.pending = false;
     if (window.__dtuFast !== st) return;
     var now = Date.now();
+    // `list` is in priority order (top = highest). A slot holds one course, so
+    // while a higher-priority course is being registered in a slot, lower ones
+    // in that slot wait. slot -> code currently holding it this scan.
+    var busy = {};
     for (var i = 0; i < list.length; i++) {
       var e = list[i], code = e.code, n = st.n[code] || 0;
       var r;
+      var slotKey = e.slot || st.slotOf[code] || '';
+      if (n > 0 && n < maxClicks && slotKey && !busy[slotKey]) busy[slotKey] = code; // in flight
       if (n >= maxClicks) {
         // Out of clicks for this opening. Start again only once it is over:
         // registered, seats back to 0, or 30 s passed. A button that flips to
@@ -331,6 +351,22 @@ function fastWatcherInPage(list, sid, gap, prefix, locate, quick, maxClicks, fin
       }
       var wait = (n === 1 ? quick : gap) - (now - (st.last[code] || 0));
       if (n > 0 && wait > 0) { later(code, wait + 5); continue; }
+      if (n === 0) {
+        // Look first (no click): learn the slot, and give way to a
+        // higher-priority course already going for the same slot.
+        var pk;
+        try { pk = loc(code, e.slot, 'peek'); } catch (_) { continue; }
+        if (pk && pk.slot) { st.slotOf[code] = pk.slot; slotKey = e.slot || pk.slot; }
+        if (pk && pk.found && !pk.disabled && slotKey) {
+          if (busy[slotKey] && busy[slotKey] !== code) {
+            if (!st.waited[code]) { st.waited[code] = true; report({ kind: 'waiting', code: code, behind: busy[slotKey] }); }
+            later(code, gap);
+            continue;
+          }
+          busy[slotKey] = code;
+        }
+        st.waited[code] = false;
+      }
       var useDom = n % 2 === 0;
       try { r = loc(code, e.slot, useDom ? 'domclick' : 'locate'); } catch (_) { continue; }
       if (r && r.found) {
@@ -387,5 +423,5 @@ const STOP_FAST_WATCHER_SCRIPT =
 
 module.exports = {
   PORTAL_URL, FAST_ADD_PREFIX, STOP_FAST_WATCHER_SCRIPT, KEEP_VISIBLE_SCRIPT, MAX_CLICKS_PER_OPENING,
-  parseCells, classify, createMonitor, buildReaderScript, buildAddCourseScript, buildFastWatcherScript,
+  parseCells, classify, blockedByLowerPriority, createMonitor, buildReaderScript, buildAddCourseScript, buildFastWatcherScript,
 };

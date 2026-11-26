@@ -8,7 +8,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const {
   createMonitor, buildReaderScript, buildAddCourseScript, buildFastWatcherScript,
-  classify, PORTAL_URL, FAST_ADD_PREFIX, STOP_FAST_WATCHER_SCRIPT, KEEP_VISIBLE_SCRIPT, MAX_CLICKS_PER_OPENING,
+  classify, blockedByLowerPriority, PORTAL_URL, FAST_ADD_PREFIX, STOP_FAST_WATCHER_SCRIPT, KEEP_VISIBLE_SCRIPT, MAX_CLICKS_PER_OPENING,
 } = require('./monitor');
 
 if (!app) {
@@ -72,6 +72,7 @@ function newAccount(id) {
     clickedCodes: new Map(), // code -> { at, reported }: clicked Register, awaiting "Registered"
     lastClickLog: new Map(), // code -> ts, to keep the log short
     addAttempts: new Map(),  // code -> { count, lastAt, lastWarn }
+    switchWarned: new Set(), // higher-priority course open in a slot you hold
   };
 }
 
@@ -212,6 +213,10 @@ function onConsoleMessage(acc, event, level, message) {
     if (acc.clickedCodes.delete(r.code)) monitorStatus(acc, 'good', `${r.code}: ADDED ✓`);
     return;
   }
+  if (r.kind === 'waiting') {
+    monitorStatus(acc, 'info', `${r.code}: open, waiting for ${r.behind} (same slot, higher priority)`);
+    return;
+  }
   if (r.kind === 'capped') {
     monitorStatus(acc, 'warn', `${r.code}: no response after ${r.n} clicks, pausing 30 s`);
     return;
@@ -337,6 +342,7 @@ function stopMonitor(acc) {
   acc.addAttempts = new Map();
   acc.clickedCodes = new Map();
   acc.lastClickLog = new Map();
+  acc.switchWarned = new Set();
   acc.watcherAlive = false;
   send('monitor-stopped', { accountId: acc.id });
   return { success: true };
@@ -376,9 +382,17 @@ async function monitorTick(acc) {
     send('monitor-state', { accountId: acc.id, state: checkMonitor.getState(), found, total: acc.codes.length, ts: Date.now() });
     for (const a of alerts) monitorStatus(acc, 'info', `${a.code}: ${a.seats} seat open`);
 
+    // Readings come in priority order (the order of the course list).
+    warnHigherPriorityOpen(acc, readings || []);
+    const slotTaken = new Set(); // one course per slot: highest priority first
     for (const reading of (readings || [])) {
       if (acc.generation !== currentGeneration) break;
       if (!reading || reading.found === false) continue;
+      const rSlot = String(reading.slot || '').toUpperCase();
+      if (classify(reading) === 'available' && rSlot) {
+        if (slotTaken.has(rSlot)) continue; // a higher-priority course has this slot
+        slotTaken.add(rSlot);
+      }
       if (classify(reading) !== 'available') {
         // Clicked, but a few seconds later the row is neither added nor in
         // flight: the portal refused it. Say what the row and page show.
@@ -411,6 +425,19 @@ async function monitorTick(acc) {
     }
   } finally {
     acc.checkInProgress = false;
+  }
+}
+
+// A higher-priority course has seats, but you hold a lower-priority course
+// from your list in the same slot, so the portal greys its Register out.
+// Switching needs a Drop, which the app never does: tell the user once per opening.
+function warnHigherPriorityOpen(acc, readings) {
+  const blocked = blockedByLowerPriority(readings);
+  for (const code of [...acc.switchWarned]) if (!blocked.some(b => b.code === code)) acc.switchWarned.delete(code);
+  for (const b of blocked) {
+    if (acc.switchWarned.has(b.code)) continue;
+    acc.switchWarned.add(b.code);
+    monitorStatus(acc, 'warn', `${b.code} open (${b.seats}) - you hold ${b.held} in ${b.slot}. Drop it yourself to switch`);
   }
 }
 

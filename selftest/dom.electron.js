@@ -192,6 +192,32 @@ app.whenReady().then(async () => {
   ok(!clicks.some(c => c.code === 'MC310'), 'unlisted MC310 (also open) never clicked', clicks);
   ok(noDrops(clicks), 'no Drop clicked', clicks);
 
+  // ---- 6b. PRIORITY: two courses in the SAME slot open together ----
+  // trustedOnly page: the first (DOM) click is ignored, so priority 1 stays
+  // "in flight" for a while; priority 2 must wait, never jump in.
+  for (const [first, second] of [['HU404', 'CD302'], ['CD302', 'HU404']]) {
+    await load(page(SCREENSHOT_ROWS, 'trustedOnly'));
+    reports = [];
+    await watch([{ code: first, slot: '' }, { code: second, slot: '' }]);
+    await run(`window.openSeat('${first}'); window.openSeat('${second}')`);
+    await wait(1200);
+    clicks = await run('window.clicks');
+    const ra = await run(buildReaderScript([first, second]));
+    ok(classify(ra[0]) === 'registered' && !ra[1].added, `same slot: priority 1 (${first}) registered, not ${second}`, { ra, clicks });
+    ok(!clicks.some(c => c.code === second), `same slot: ${second} (priority 2) never clicked`, clicks);
+    ok(reports.some(r => r.kind === 'waiting' && r.code === second && r.behind === first), `log says ${second} waits for ${first}`, reports);
+    ok(noDrops(clicks), 'no Drop clicked', clicks);
+  }
+
+  // ---- 6c. PRIORITY: different slots open together -> both, priority 1 first ----
+  await load(page(SCREENSHOT_ROWS, 'any'));
+  reports = [];
+  await watch([{ code: 'EC328', slot: '' }, { code: 'HU404', slot: '' }]); // EC328 is E2, HU404 is E4
+  await run("window.openSeat('HU404'); window.openSeat('EC328')");
+  await wait(800);
+  clicks = await run('window.clicks');
+  ok(clicks.length === 2 && clicks[0].code === 'EC328' && clicks[1].code === 'HU404', 'different slots: both registered, priority 1 clicked first', clicks);
+
   // ---- 7. race: Drop slides under the real mouse click -> blocked ----
   await load(page(SCREENSHOT_ROWS, 'trustedOnly'));
   reports = [];
