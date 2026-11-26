@@ -118,8 +118,8 @@ function createMonitor(courseCodes) {
 
 // In-page: find the table row for `code` and describe it. Read-only.
 // Returns null, or { row, cells, reg, regCount, labels, rowText }.
-// `parse` is parseCells (passed in so the page uses the same parser).
-function findCourseRowInPage(code, parse) {
+// `parse` is parseCells and `isOff` is isOffInPage (passed in so the page uses the same code).
+function findCourseRowInPage(code, parse, isOff) {
   function norm(s) { return String(s || '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim(); }
   function label(b) { return norm(b.textContent || b.value || b.getAttribute('aria-label')); }
   var SEL = 'button,a,[role=button],input[type=button]';
@@ -150,10 +150,20 @@ function findCourseRowInPage(code, parse) {
     var regs = regButtonsIn(row);
     var labels = [], bs = row.querySelectorAll(SEL);
     for (var b = 0; b < bs.length; b++) { var l = label(bs[b]); if (l) labels.push(l); }
-    // Registered: a button/badge saying so, or the word in a cell. Cells and
-    // labels are checked separately because the row's full text is glued
-    // together with no spaces between cells.
-    var added = false, parts = cells.concat(labels);
+    // Registered, as the portal shows it: Register greyed out and the row's
+    // OTHER button switched on (it is only clickable for a course you hold).
+    // This only reads that button's state; it is never clicked.
+    var reg1 = regs.length === 1 ? regs[0] : null, otherOn = false;
+    for (var q = 0; q < bs.length; q++) {
+      var ql = label(bs[q]);
+      if (ql && !/^Register/i.test(ql) && !/^(Processing|Please wait|Loading)|\.\.\.|…/i.test(ql) && !isOff(bs[q])) otherOn = true;
+    }
+    // Needs a real, greyed-out "Register" button: a button that says
+    // "Registering..." mid-request must never count as registered.
+    var added = !!reg1 && isOff(reg1) && otherOn;
+    // Or a badge/cell saying so. Cells and labels are checked separately
+    // because the row's full text is glued together with no spaces.
+    var parts = cells.concat(labels);
     for (var p = 0; p < parts.length && !added; p++) added = /\b(Registered|Enrolled)\b|✓|✔/i.test(parts[p]);
     return { row: row, cells: cells, info: parse(code, cells), reg: regs.length === 1 ? regs[0] : null,
       regCount: regs.length, labels: labels, added: added, rowText: norm(row.textContent) };
@@ -175,7 +185,7 @@ function isOffInPage(btn) {
 // In-page, read-only: read each course's row. Clicks nothing.
 function readRowsInPage(codes, find, parse, isOff) {
   return codes.map(function (code) {
-    var f = find(code, parse);
+    var f = find(code, parse, isOff);
     if (!f) return { code: code, found: false };
     var r = f.info;
     r.found = true;
@@ -209,7 +219,7 @@ function buildReaderScript(courseCodes) {
 // Only a button whose text is exactly "Register" is ever returned or clicked.
 function locateRegisterInPage(code, slot, mode, find, parse, isOff) {
   function norm(s) { return String(s || '').replace(/\s+/g, ' ').trim(); }
-  var f = find(code, parse);
+  var f = find(code, parse, isOff);
   if (!f) return { found: false, reason: 'row not on page' };
   var rowText = f.rowText.slice(0, 160);
   if (f.added) return { found: false, added: true, rowText: rowText };

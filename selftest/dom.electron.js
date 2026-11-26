@@ -13,11 +13,12 @@ const {
   MAX_CLICKS_PER_OPENING,
 } = require('../monitor.js');
 
-// One table row. opts: off (disabled attr), dim (greyed via opacity only), slot.
+// One table row, like the real page: Drop is only clickable for a course you hold.
+// opts: off (Register disabled), dim (Register greyed via opacity only), slot, mine (registered).
 const row = (name, code, seats, opts = {}) =>
   `<tr><td>${name}</td><td>${code}</td><td>4</td><td>${opts.slot || 'E4'}</td><td class="seats">${seats}</td>` +
   `<td><button class="reg"${opts.off ? ' disabled' : ''}${opts.dim ? ' style="opacity:.5"' : ''}>Register</button></td>` +
-  `<td><button class="drop">Drop</button></td></tr>`;
+  `<td><button class="drop"${opts.mine ? '' : ' disabled'}>Drop</button></td></tr>`;
 
 // behaviour: 'trustedOnly' (ignores script clicks), 'any', 'ignore' (never reacts),
 // 'reject' (shows Registering... then back to Register, like a refused request).
@@ -41,7 +42,11 @@ const page = (rows, behaviour) => `<!doctype html><html><body style="margin:0">
     if (mode === 'ignore' || (mode === 'trustedOnly' && !e.isTrusted)) return;
     if (mode === 'reject') { b.textContent = 'Registering...'; setTimeout(() => { b.textContent = 'Register'; }, 40); return; }
     const s = b.closest('tr').querySelector('.seats'); s.textContent = String(Math.max(0, +s.textContent - 1));
-    b.textContent = 'Registered'; b.disabled = true;
+    // Real portal: Register greys out, Drop switches on, and every other
+    // Register in the same slot greys out (one course per slot).
+    const tr = b.closest('tr'), slot = tr.children[3].textContent;
+    b.disabled = true; tr.querySelector('.drop').disabled = false;
+    document.querySelectorAll('tr').forEach(t => { if (t.children[3] && t.children[3].textContent === slot) t.querySelector('.reg').disabled = true; });
   });
   window.openSeat = code => {                // a seat opens on the live page
     const tr = [...document.querySelectorAll('tr')].find(t => t.children[1] && t.children[1].textContent === code);
@@ -59,7 +64,9 @@ const SCREENSHOT_ROWS =
   row('Public Finance And Policy', 'HU404', 0, { off: true }) +
   row('cyclonic risk and management', 'CE328', 48, { dim: true }) +
   row('Deep Learning', 'CS318', 99, { off: true }) +
-  row('Information Theory and Coding', 'EC328', 0, { off: true });
+  row('Information Theory and Coding', 'EC328', 0, { off: true, slot: 'E2' }) +
+  row('Pattern Recognition and Applications', 'IT308', 0, { off: true, slot: 'E1', mine: true }) +
+  row('GAS DYNAMICS & JET PROPULSION', 'ME306n', 293, { off: true, slot: 'E1' });
 
 let passed = 0, failed = 0;
 function ok(cond, name, detail) {
@@ -107,7 +114,11 @@ app.whenReady().then(async () => {
   ok(classify(by.CH310N) === 'available' && by.CH310N.seats === 53, 'CH310n (lowercase on page) found as CH310N', by.CH310N);
   ok(classify(by.SC302) === 'unknown' && by.SC302.slot === 'E3', 'SC302 in slot E3 read correctly', by.SC302);
   ok(by.ZZ999.found === false, 'course not on page -> not found', by.ZZ999);
-  ok(!rd.some(r => r.added), 'Drop buttons on every row do NOT make a course read as registered', rd.map(r => r.code + ':' + r.added));
+  ok(!rd.some(r => r.added), 'dim Drop buttons on every row do NOT make a course read as registered', rd.map(r => r.code + ':' + r.added));
+  const e1 = await run(buildReaderScript(['IT308', 'ME306N']));
+  ok(classify(e1[0]) === 'registered', 'IT308 (green row: Register grey, Drop live) reads REGISTERED', e1[0]);
+  ok(classify(e1[1]) !== 'available' && !e1[1].added, 'ME306n (293 seats, Register grey: slot taken) is not clickable and not registered', e1[1]);
+  ok(!(await run(buildAddCourseScript('IT308', '', 'locate'))).found, 'registered IT308: nothing to click');
 
   // ---- 2. locate + real mouse click hits EV302's Register only ----
   const loc = await run(buildAddCourseScript('EV302', 'E4', 'locate'));
@@ -141,6 +152,10 @@ app.whenReady().then(async () => {
   ok(classify((await run(buildReaderScript(['HU404'])))[0]) === 'registered', 'HU404 registered');
   ok(reports.some(r => r.kind === 'added' && r.code === 'HU404'), 'watcher reports added', reports);
   ok(noDrops(clicks) && clicks.every(c => c.code === 'HU404'), 'nothing else clicked: no Drop, no other course', clicks);
+  const huRow = await run(buildAddCourseScript('HU404', '', 'locate'));
+  ok(!huRow.found && huRow.added, 'HU404 now has a LIVE Drop button: still never clicked, read as registered', huRow);
+  await wait(400);
+  ok(noDrops(await run('window.clicks')), 'live Drop left alone after registering');
 
   // ---- 4. click limit: page never reacts -> at most MAX clicks, then pause ----
   await load(page(SCREENSHOT_ROWS, 'ignore'));
@@ -183,6 +198,7 @@ app.whenReady().then(async () => {
   onTrusted = async r => {
     await run(`(() => { const tr = [...document.querySelectorAll('tr')].find(t => t.children[1] && t.children[1].textContent === 'HU404');
       const reg = tr.querySelector('.reg'), drop = tr.querySelector('.drop');
+      drop.disabled = false; // worst case: a LIVE Drop (a course you hold)
       reg.parentElement.appendChild(drop); reg.remove(); })()`); // Drop now sits where Register was
     trustedClick(wc, r.x, r.y);
   };
