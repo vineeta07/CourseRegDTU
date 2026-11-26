@@ -39,10 +39,12 @@ const MAX_ACCOUNTS = 6;
 const NOT_ADDED_AFTER_MS = 3000;
 // Read-only: visible error / toast / alert text on the portal page.
 const PAGE_MESSAGES_SCRIPT = `(function(){
-  var sel='[role=alert],[role=status],[aria-live],.toast,.alert,.error,.snackbar,.notification,[class*=toast],[class*=Toast],[class*=error],[class*=alert],[class*=snack],[class*=notif],[class*=message]';
+  var sel='[role=alert],[role=alertdialog],.toast,.alert,.error,.snackbar,[class*=toast],[class*=Toast],[class*=error],[class*=alert],[class*=snack]';
+  var chat='[class*=chat],[class*=Chat],[id*=chat],[class*=bot],[class*=assistant],[class*=Assistant]';
   var out=[],els=document.querySelectorAll(sel);
   for(var i=0;i<els.length&&out.length<3;i++){var e=els[i];if(!e.offsetParent&&getComputedStyle(e).position!=='fixed')continue;
-    var t=String(e.textContent||'').replace(/\\s+/g,' ').trim();if(t&&t.length<300&&out.indexOf(t)<0)out.push(t);}
+    if(e.closest(chat))continue; // the portal's chat assistant is not an error message
+    var t=String(e.textContent||'').replace(/\\s+/g,' ').trim();if(t&&t.length<200&&out.indexOf(t)<0)out.push(t);}
   return out.join(' / ').slice(0,250);})()`;
 
 // Globally unique, so a message from one account's page can never be taken
